@@ -46,7 +46,11 @@ jobs:
 
       - name: Setup Docker Compose
         run: |
-          docker compose -f vault/docker-compose.yml up --build -d
+          # Override VAULT_ADDR for the containers' own network: the job-level
+          # VAULT_ADDR (http://127.0.0.1:8200) is for host-side curl calls and
+          # would otherwise leak into admin-service's compose substitution,
+          # pointing it at itself instead of the vault container.
+          VAULT_ADDR=http://vault:8200 docker compose -f vault/docker-compose.yml up --build -d
 
       - name: Wait for services
         run: |
