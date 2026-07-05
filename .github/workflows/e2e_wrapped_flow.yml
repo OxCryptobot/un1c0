@@ -31,27 +31,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Docker Compose
-        run: |
-          docker compose -f vault/docker-compose.yml up --build -d
-
-      - name: Wait for services
-        run: |
-          # Wait for Vault and admin service
-          for i in {1..30}; do
-            if curl -sS http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1; then break; fi
-            echo "Waiting for Vault..."; sleep 2
-          done
-          for i in {1..30}; do
-            if curl -sS http://127.0.0.1:5000/health >/dev/null 2>&1; then break; fi
-            echo "Waiting for admin-service..."; sleep 2
-          done
-
-      - name: Initialize Vault (KV, policy, AppRole)
-        run: |
-          set -eux
-          ./vault/init_vault.sh
-
       - name: Provision client certs (from secrets or generate)
         run: |
           set -eux
@@ -64,6 +43,31 @@ jobs:
             echo "CLIENT certs not provided via secrets; generating local certs"
             ./vault/generate_certs.sh
           fi
+
+      - name: Setup Docker Compose
+        run: |
+          docker compose -f vault/docker-compose.yml up --build -d
+
+      - name: Wait for services
+        run: |
+          # Wait for Vault, admin service, and the nginx mTLS listener
+          for i in {1..30}; do
+            if curl -sS http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1; then break; fi
+            echo "Waiting for Vault..."; sleep 2
+          done
+          for i in {1..30}; do
+            if curl -sS http://127.0.0.1:5000/health >/dev/null 2>&1; then break; fi
+            echo "Waiting for admin-service..."; sleep 2
+          done
+          for i in {1..30}; do
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/8443" 2>/dev/null; then break; fi
+            echo "Waiting for nginx (mTLS listener)..."; sleep 2
+          done
+
+      - name: Initialize Vault (KV, policy, AppRole)
+        run: |
+          set -eux
+          ./vault/init_vault.sh
 
       - name: Request wrapped secret via local admin service (mTLS)
         run: |
