@@ -112,6 +112,8 @@ jobs:
         if: failure()
         run: |
           docker compose -f vault/docker-compose.yml logs
+          echo "--- vault/admin_service/logs/admin_service.log ---"
+          cat vault/admin_service/logs/admin_service.log 2>/dev/null || echo "(no admin_service.log found)"
 
       - name: Cleanup docker compose
         if: always()
