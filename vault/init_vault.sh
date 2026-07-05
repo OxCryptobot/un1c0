@@ -23,7 +23,8 @@ curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -H "Content-Type: application/
   -d "{\"data\":{\"key\":\"$MASTER_KEY\",\"expiry\":\"$EXPIRY\"}}" \
   $VAULT_ADDR/v1/kv/data/master_key
 
-echo "Created master key in Vault at kv/data/master_key. Do NOT share this log; copy the raw key from your local environment if needed." 
+echo "::add-mask::$MASTER_KEY"
+echo "Created master key in Vault at kv/data/master_key. Do NOT share this log; copy the raw key from your local environment if needed."
 echo "Raw key (copy it now if you need to deliver it securely): $MASTER_KEY"
 
 echo "Creating a policy 'read-master-key' that allows reading kv/data/master_key"
@@ -33,7 +34,8 @@ path "kv/data/master_key" {
 }
 HCL
 
-curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -d @/tmp/read-master-key.hcl $VAULT_ADDR/v1/sys/policies/acl/read-master-key || true
+POLICY_JSON=$(jq -Rs '{policy: .}' /tmp/read-master-key.hcl)
+curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -H "Content-Type: application/json" -d "$POLICY_JSON" $VAULT_ADDR/v1/sys/policies/acl/read-master-key || true
 
 echo "Creating token with 'read-master-key' policy"
 READ_TOKEN=$(curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -d '{"policies":["read-master-key"],"ttl":"1h"}' $VAULT_ADDR/v1/auth/token/create | jq -r '.auth.client_token') || true

@@ -108,6 +108,11 @@ jobs:
             echo "KEY_ADMIN_TOKEN not provided or KEY empty; skipping writing repository secret."
           fi
 
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f vault/docker-compose.yml logs
+
       - name: Cleanup docker compose
         if: always()
         run: |
