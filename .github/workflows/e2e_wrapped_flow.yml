@@ -75,22 +75,27 @@ jobs:
 
       - name: Request wrapped secret via local admin service (mTLS)
         run: |
-          set -eux
+          set -eu
           # Use mTLS only; do not include any API-key header
+          # (no -x here: it would trace $RESP/$WRAP_TOKEN into the log before masking takes effect)
           RESP=$(curl -sS --cert vault/certs/client.crt --key vault/certs/client.key -k -X POST -H "Content-Type: application/json" -d '{"role":"master-key-approle","wrap_ttl":"60s"}' https://localhost:8443/issue-wrapped-secret-id)
-          echo "$RESP" | jq .
           WRAP_TOKEN=$(echo "$RESP" | jq -r '.wrap_token // empty')
+          if [ -n "$WRAP_TOKEN" ]; then echo "::add-mask::$WRAP_TOKEN"; fi
+          echo "$RESP" | jq .
           if [ -z "$WRAP_TOKEN" ]; then echo "No wrap_token returned"; exit 1; fi
+          echo "WRAP_TOKEN=$WRAP_TOKEN" >> "$GITHUB_ENV"
 
       - name: Unwrap token with local Vault
         run: |
-          set -eux
-          # Use wrap token to unwrap
+          set -eu
+          # Use wrap token to unwrap (no -x: would trace $UNWRAP/$SECRET_ID before masking)
           UNWRAP=$(curl -sS -H "X-Vault-Token: $WRAP_TOKEN" "$VAULT_ADDR/v1/sys/wrapping/unwrap")
-          echo "$UNWRAP" | jq .
           SECRET_ID=$(echo "$UNWRAP" | jq -r '.data.secret_id // empty')
+          if [ -n "$SECRET_ID" ]; then echo "::add-mask::$SECRET_ID"; fi
+          echo "$UNWRAP" | jq .
           if [ -z "$SECRET_ID" ]; then echo "failed to unwrap secret_id"; exit 1; fi
           echo "Obtained SECRET_ID from unwrap"
+          echo "SECRET_ID=$SECRET_ID" >> "$GITHUB_ENV"
 
       - name: Login via AppRole with secret_id and fetch MASTER_KEY
         env:
