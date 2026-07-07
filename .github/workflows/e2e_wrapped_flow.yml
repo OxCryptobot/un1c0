@@ -89,7 +89,7 @@ jobs:
         run: |
           set -eu
           # Use wrap token to unwrap (no -x: would trace $UNWRAP/$SECRET_ID before masking)
-          UNWRAP=$(curl -sS -H "X-Vault-Token: $WRAP_TOKEN" "$VAULT_ADDR/v1/sys/wrapping/unwrap")
+          UNWRAP=$(curl -sS -X POST -H "X-Vault-Token: $WRAP_TOKEN" "$VAULT_ADDR/v1/sys/wrapping/unwrap")
           SECRET_ID=$(echo "$UNWRAP" | jq -r '.data.secret_id // empty')
           if [ -n "$SECRET_ID" ]; then echo "::add-mask::$SECRET_ID"; fi
           echo "$UNWRAP" | jq .
