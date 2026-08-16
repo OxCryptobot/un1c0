@@ -160,3 +160,9 @@ Do not use an LLM as the sole security decision-maker. A separate analyzer may a
 [1]: https://docs.openai.com "Provider structured-output reference is maintained separately in PHASE2_PROVIDER_ROUTING.md"
 [2]: https://docs.openhands.dev/sdk/guides/security "OpenHands Security & Action Confirmation"
 [3]: https://docs.docker.com/engine/security/seccomp/ "Docker Seccomp security profiles"
+
+## Implemented backend
+
+`src/verification.rs` now includes `RootlessContainerVerifier`. It validates a named Docker or Podman runtime, requires rootless mode by default, mounts only the canonical workspace at `/workspace`, runs with `--network=none`, drops all Linux capabilities, enables `no-new-privileges`, keeps the default seccomp profile, applies PID/memory/CPU/output/time budgets, uses a read-only root filesystem with a bounded temporary filesystem, captures bounded stdout/stderr, hashes the workspace tree before and after execution, and kills/reaps timed-out processes.
+
+The sandbox must still provide a configured rootless Docker or Podman runtime and the pinned verification image. This repository environment does not currently expose either runtime, so the backend is tested through command-policy and fail-closed tests rather than claiming a live container execution result. The runtime check refuses unsupported binaries and refuses non-rootless Docker/Podman sessions.

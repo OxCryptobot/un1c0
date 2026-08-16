@@ -7,9 +7,14 @@
 
 use crate::agentic::{Capability, Workspace};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 const MAX_GATES: usize = 128;
@@ -144,6 +149,7 @@ pub enum FailureClass {
 #[derive(Debug, Clone)]
 pub struct ValidatedGate {
     pub gate: VerificationGate,
+    pub workspace_root: PathBuf,
     pub working_directory: PathBuf,
     pub timeout_ms: u64,
 }
@@ -269,6 +275,7 @@ impl VerifierCatalog {
             }
             validated.push(ValidatedGate {
                 gate: gate.clone(),
+                workspace_root: workspace.root().to_path_buf(),
                 working_directory,
                 timeout_ms,
             });
@@ -368,6 +375,345 @@ fn contains_path_escape(value: &str) -> bool {
             .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
 }
 
+#[derive(Debug, Clone)]
+pub struct RootlessContainerConfig {
+    pub runtime: String,
+    pub image: String,
+    pub require_rootless: bool,
+    pub tmpfs_bytes: u64,
+}
+
+impl RootlessContainerConfig {
+    pub fn new(
+        runtime: impl Into<String>,
+        image: impl Into<String>,
+    ) -> Result<Self, VerificationError> {
+        let runtime = runtime.into();
+        let image = image.into();
+        if runtime.trim().is_empty() || image.trim().is_empty() {
+            return Err(VerificationError::InvalidManifest(
+                "container runtime and image are required".into(),
+            ));
+        }
+        Ok(Self {
+            runtime,
+            image,
+            require_rootless: true,
+            tmpfs_bytes: 256 * 1024 * 1024,
+        })
+    }
+}
+
+pub struct RootlessContainerVerifier {
+    config: RootlessContainerConfig,
+}
+
+impl RootlessContainerVerifier {
+    pub fn new(config: RootlessContainerConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn command_preview(
+        &self,
+        gate: &ValidatedGate,
+        budget: &VerificationBudget,
+    ) -> Vec<String> {
+        let workdir = gate
+            .working_directory
+            .strip_prefix(&gate.workspace_root)
+            .ok()
+            .map(|path| format!("/workspace/{}", path.display()))
+            .unwrap_or_else(|| "/workspace".into());
+        let memory = format!("{}b", budget.memory_bytes);
+        let tmpfs = format!("/tmp:rw,nosuid,size={}b", self.config.tmpfs_bytes);
+        let mount = format!(
+            "type=bind,src={},dst=/workspace,rw",
+            gate.workspace_root.display()
+        );
+        let mut args = vec![
+            self.config.runtime.clone(),
+            "run".into(),
+            "--rm".into(),
+            "--init".into(),
+            "--network=none".into(),
+            "--cap-drop=ALL".into(),
+            "--security-opt=no-new-privileges".into(),
+            "--security-opt=seccomp=default".into(),
+            format!("--pids-limit={}", budget.max_processes),
+            format!("--memory={}", memory),
+            format!("--cpus={}", cpu_quota(budget.max_processes)),
+            "--read-only".into(),
+            format!("--tmpfs={}", tmpfs),
+            format!("--mount={}", mount),
+            format!("--workdir={}", workdir),
+            self.config.image.clone(),
+            gate.gate.program.clone(),
+        ];
+        args.extend(gate.gate.args.clone());
+        args
+    }
+
+    fn ensure_rootless_runtime(&self) -> Result<(), VerificationError> {
+        let runtime_name = Path::new(&self.config.runtime)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let output = if runtime_name == "podman" {
+            Command::new(&self.config.runtime)
+                .args(["info", "--format", "{{.Host.Security.Rootless}}"])
+                .output()
+        } else if runtime_name == "docker" {
+            Command::new(&self.config.runtime)
+                .args(["info", "--format", "{{json .SecurityOptions}}"])
+                .output()
+        } else {
+            return Err(VerificationError::Unavailable(format!(
+                "unsupported container runtime '{}'; use docker or podman",
+                self.config.runtime
+            )));
+        }
+        .map_err(|error| {
+            VerificationError::Unavailable(format!("container runtime unavailable: {}", error))
+        })?;
+        if !output.status.success() {
+            return Err(VerificationError::Unavailable(
+                "container runtime info failed".into(),
+            ));
+        }
+        if self.config.require_rootless {
+            let info = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            let rootless = if runtime_name == "podman" {
+                info.trim() == "true" || info.contains("rootless: true")
+            } else {
+                info.contains("rootless")
+            };
+            if !rootless {
+                return Err(VerificationError::PolicyBlocked(
+                    "container runtime is not configured for rootless execution".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SandboxVerifier for RootlessContainerVerifier {
+    fn execute(
+        &self,
+        gate: &ValidatedGate,
+        budget: &VerificationBudget,
+    ) -> Result<VerificationResult, VerificationError> {
+        if gate.gate.network || budget.network != NetworkPolicy::Disabled {
+            return Err(VerificationError::PolicyBlocked(
+                "rootless verifier only permits network-disabled gates".into(),
+            ));
+        }
+        self.ensure_rootless_runtime()?;
+        let started_at_ms = now_ms();
+        let before = hash_tree(&gate.workspace_root)?;
+        let args = self.command_preview(gate, budget);
+        let args_hash = hash_bytes(
+            serde_json::to_vec(&args)
+                .map_err(|error| VerificationError::Unavailable(error.to_string()))?
+                .as_slice(),
+        );
+        let mut command = Command::new(&args[0]);
+        command
+            .args(&args[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|error| {
+            VerificationError::Unavailable(format!("failed to start container runtime: {}", error))
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            VerificationError::Unavailable("container stdout pipe unavailable".into())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            VerificationError::Unavailable("container stderr pipe unavailable".into())
+        })?;
+        let output_limit = budget.output_bytes / 2;
+        let stdout_thread = spawn_bounded_reader(stdout, output_limit);
+        let stderr_thread = spawn_bounded_reader(stderr, output_limit);
+        let timeout = Duration::from_millis(gate.timeout_ms.min(budget.wall_clock_ms));
+        let deadline = Instant::now() + timeout;
+        let (status, timed_out) = wait_with_timeout(&mut child, deadline)?;
+        let stdout = join_reader(stdout_thread)?;
+        let stderr = join_reader(stderr_thread)?;
+        let after = hash_tree(&gate.workspace_root)?;
+        let final_status = if timed_out {
+            VerificationStatus::TimedOut
+        } else if status.success() {
+            VerificationStatus::Passed
+        } else {
+            VerificationStatus::Failed
+        };
+        Ok(VerificationResult {
+            run_id: format!("verify-{}", started_at_ms),
+            gate_id: gate.gate.id.clone(),
+            status: final_status,
+            program: gate.gate.program.clone(),
+            args_hash,
+            workspace_tree_before: before,
+            workspace_tree_after: after,
+            toolchain_digest: Some(hash_bytes(self.config.image.as_bytes())),
+            started_at_ms,
+            duration_ms: now_ms().saturating_sub(started_at_ms) as u64,
+            exit_code: status.code(),
+            stdout,
+            stderr,
+            diagnostics: Vec::new(),
+        })
+    }
+}
+
+fn wait_with_timeout(
+    child: &mut Child,
+    deadline: std::time::Instant,
+) -> Result<(std::process::ExitStatus, bool), VerificationError> {
+    loop {
+        match child
+            .try_wait()
+            .map_err(|error| VerificationError::Unavailable(error.to_string()))?
+        {
+            Some(status) => return Ok((status, false)),
+            None if std::time::Instant::now() >= deadline => {
+                child
+                    .kill()
+                    .map_err(|error| VerificationError::Unavailable(error.to_string()))?;
+                let status = child
+                    .wait()
+                    .map_err(|error| VerificationError::Unavailable(error.to_string()))?;
+                return Ok((status, true));
+            }
+            None => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
+fn spawn_bounded_reader<R: Read + Send + 'static>(mut reader: R, limit: u64) -> JoinHandle<String> {
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        let mut truncated = false;
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    if (bytes.len() as u64) < limit {
+                        let remaining = (limit - bytes.len() as u64) as usize;
+                        bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+                        if read > remaining {
+                            truncated = true;
+                        }
+                    } else {
+                        truncated = true;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let mut output = String::from_utf8_lossy(&bytes).into_owned();
+        if truncated {
+            output.push_str("\n...[output truncated by verifier budget]");
+        }
+        output
+    })
+}
+
+fn join_reader(handle: JoinHandle<String>) -> Result<String, VerificationError> {
+    handle
+        .join()
+        .map_err(|_| VerificationError::Unavailable("output reader panicked".into()))
+}
+
+fn hash_tree(path: &Path) -> Result<String, VerificationError> {
+    let mut entries = Vec::new();
+    collect_tree(path, path, &mut entries)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = Sha256::new();
+    for (relative, bytes) in entries {
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        hasher.update(bytes);
+        hasher.update([0]);
+    }
+    Ok(format!(
+        "sha256:{}",
+        hex_digest(hasher.finalize().as_slice())
+    ))
+}
+
+fn collect_tree(
+    root: &Path,
+    path: &Path,
+    entries: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), VerificationError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| VerificationError::Unavailable(error.to_string()))?;
+    if metadata.file_type().is_symlink() {
+        entries.push((
+            path.strip_prefix(root)
+                .unwrap_or(path)
+                .display()
+                .to_string(),
+            b"symlink".to_vec(),
+        ));
+        return Ok(());
+    }
+    if metadata.is_file() {
+        let bytes =
+            fs::read(path).map_err(|error| VerificationError::Unavailable(error.to_string()))?;
+        entries.push((
+            path.strip_prefix(root)
+                .unwrap_or(path)
+                .display()
+                .to_string(),
+            bytes,
+        ));
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in
+            fs::read_dir(path).map_err(|error| VerificationError::Unavailable(error.to_string()))?
+        {
+            collect_tree(
+                root,
+                &entry
+                    .map_err(|error| VerificationError::Unavailable(error.to_string()))?
+                    .path(),
+                entries,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{}", hex_digest(hasher.finalize().as_slice()))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+fn cpu_quota(max_processes: u32) -> String {
+    if max_processes <= 1 {
+        "1.0".into()
+    } else {
+        "2.0".into()
+    }
+}
+
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,6 +787,44 @@ mod tests {
         assert!(matches!(
             FailClosedVerifier.execute(&gate, &VerificationBudget::default()),
             Err(VerificationError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn rootless_command_uses_least_privilege_defaults() {
+        let dir = tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let gate = VerifierCatalog::safe_local()
+            .validate_manifest(&manifest(), &workspace)
+            .unwrap()
+            .remove(0);
+        let verifier = RootlessContainerVerifier::new(
+            RootlessContainerConfig::new("docker", "rust:1.85-slim").unwrap(),
+        );
+        let command = verifier.command_preview(&gate, &VerificationBudget::default());
+        assert!(command.contains(&"--network=none".into()));
+        assert!(command.contains(&"--cap-drop=ALL".into()));
+        assert!(command.contains(&"--security-opt=no-new-privileges".into()));
+        assert!(command.contains(&"--security-opt=seccomp=default".into()));
+        assert!(command.contains(&"--read-only".into()));
+        assert!(command.iter().any(|arg| arg.starts_with("--memory=")));
+        assert!(command.iter().any(|arg| arg.starts_with("--pids-limit=")));
+    }
+
+    #[test]
+    fn rootless_backend_rejects_unsupported_runtime_before_execution() {
+        let dir = tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let gate = VerifierCatalog::safe_local()
+            .validate_manifest(&manifest(), &workspace)
+            .unwrap()
+            .remove(0);
+        let verifier = RootlessContainerVerifier::new(
+            RootlessContainerConfig::new("untrusted-runtime", "rust:1.85-slim").unwrap(),
+        );
+        assert!(matches!(
+            verifier.execute(&gate, &VerificationBudget::default()),
+            Err(VerificationError::Unavailable(message)) if message.contains("unsupported container runtime")
         ));
     }
 

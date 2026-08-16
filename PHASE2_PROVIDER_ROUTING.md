@@ -128,3 +128,9 @@ Never journal API keys, raw secrets, or unredacted private context. Store raw mo
 
 [1]: https://developers.openai.com/api/docs/guides/structured-outputs "OpenAI Structured model outputs"
 [2]: https://docs.litellm.ai/docs/proxy/reliability "LiteLLM Fallbacks and Provider Failover"
+
+## Implemented OpenAI-compatible adapter
+
+`src/provider_openai.rs` implements the `/v1/chat/completions` contract with configurable base URL, model, API key, timeout, and schema version. It generates a strict `un1c0_plan` JSON Schema from the registered tools, sends structured-output requests with temperature zero, parses usage and finish reasons, handles refusals and truncation separately, maps rate limits and context errors into the router’s typed failure taxonomy, redacts authentication failures, and never executes provider output.
+
+`tests/provider_openai_integration.rs` uses a local TCP HTTP server rather than live credentials. It verifies strict schema emission and valid-plan decoding, refusal handling, `Retry-After` parsing, malformed-success rejection, authentication error redaction, and model selection. Live-provider tests should remain opt-in and must never run in ordinary CI.
