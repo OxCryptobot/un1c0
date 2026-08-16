@@ -210,3 +210,8 @@ cargo run --bin un1c0-agent -- tools
 ```
 
 The initial runtime intentionally does **not** execute arbitrary shell commands, access the network, read secrets, or silently modify its own code. Self-evolution is represented by hashed, test-bearing proposals that require an explicit approval boundary. See [AGENT_SYSTEM.md](AGENT_SYSTEM.md) for the contracts and phased roadmap.
+
+### Agent platform phases
+
+- [Phase 2 provider routing](PHASE2_PROVIDER_ROUTING.md) — structured-output adapters, typed failure taxonomy, routing, retries, cooldowns, and fallback policy.
+- [Phase 4 verification loop](PHASE4_VERIFICATION_LOOP.md) — trusted verifier manifests, sandbox boundaries, compiler/test evidence, repair tasks, and rollback rules.

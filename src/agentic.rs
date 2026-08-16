@@ -59,6 +59,7 @@ pub enum Capability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Action {
     pub id: String,
     pub tool: String,
@@ -73,6 +74,7 @@ pub struct Action {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Plan {
     pub id: String,
     pub goal: String,
