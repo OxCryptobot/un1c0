@@ -183,3 +183,30 @@ MIT © 2025 Un1c0-AI
 **Endgame:** 2025-11-29 23:59 UTC
 
 The unification has begun.
+
+## 🧠 Local-First Agent Kernel
+
+UN1C⓪ now includes a provider-neutral **agent kernel** alongside the UEG translator. The kernel treats model output as an untrusted plan and adds typed actions, dependency validation, capability-scoped tools, workspace containment, atomic file writes, bounded output, durable JSONL event journals, deterministic memory retrieval, and controlled evolution proposals. It is the foundation for programmable agentic behavior without granting an LLM ambient authority.
+
+### Agent CLI
+
+```bash
+# Generate a deterministic starter plan
+cargo run --bin un1c0-agent -- plan "inspect the repository safely" > plan.json
+
+# Execute inside a scoped workspace; read-only by default
+cargo run --bin un1c0-agent -- run plan.json \\
+  --workspace ./agent-workspace \\
+  --journal ./agent-workspace/.un1c0/events.jsonl
+
+# Enable guarded writes; every write action still requires explicit approval
+cargo run --bin un1c0-agent -- run plan.json \\
+  --workspace ./agent-workspace \\
+  --allow-writes \\
+  --approve write
+
+# Inspect the built-in tool manifest
+cargo run --bin un1c0-agent -- tools
+```
+
+The initial runtime intentionally does **not** execute arbitrary shell commands, access the network, read secrets, or silently modify its own code. Self-evolution is represented by hashed, test-bearing proposals that require an explicit approval boundary. See [AGENT_SYSTEM.md](AGENT_SYSTEM.md) for the contracts and phased roadmap.

@@ -1,0 +1,28 @@
+{
+  "id": "inspect-workspace",
+  "goal": "Inspect the workspace without changing it",
+  "actions": [
+    {
+      "id": "frame_goal",
+      "tool": "echo",
+      "input": {
+        "message": "Inspect the workspace without changing it"
+      },
+      "depends_on": [],
+      "capabilities": [],
+      "timeout_ms": 1000
+    },
+    {
+      "id": "list_workspace",
+      "tool": "list_files",
+      "input": {
+        "max_entries": 200
+      },
+      "depends_on": ["frame_goal"],
+      "capabilities": ["workspace.read"],
+      "timeout_ms": 2000
+    }
+  ],
+  "max_steps": 10,
+  "max_output_bytes": 262144
+}

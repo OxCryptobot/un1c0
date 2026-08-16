@@ -72,7 +72,7 @@ fn main() {
     // ENTROPY GATE — Hard reject before parsing
     let (ratio, is_malicious) = entropy_fingerprint(&code);
     if is_malicious {
-        eprintln!("UN1C⓪ REJECT: {} source entropy {:.3}x > 1.05 limit → OBFUSCATION DETECTED", args.from, ratio);
+        eprintln!("UN1C⓪ REJECT: {} source entropy {:.3} > 0.92 limit → OBFUSCATION DETECTED", args.from, ratio);
         eprintln!("All hostile variants are now part of the permanent training set.");
         std::process::exit(1);
     }
