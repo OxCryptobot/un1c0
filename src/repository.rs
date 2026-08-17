@@ -7,14 +7,17 @@
 use crate::provider::ContextItem;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use thiserror::Error;
 
 const DEFAULT_MAX_FILES: usize = 20_000;
 const DEFAULT_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_MAX_SYMBOLS: usize = 100_000;
+const DEFAULT_MAX_CACHED_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum RepositoryIndexError {
@@ -29,6 +32,7 @@ pub struct IndexConfig {
     pub max_files: usize,
     pub max_file_bytes: usize,
     pub max_symbols: usize,
+    pub max_cached_bytes: usize,
     pub ignored_directories: BTreeSet<String>,
     pub include_extensions: BTreeSet<String>,
 }
@@ -39,6 +43,7 @@ impl Default for IndexConfig {
             max_files: DEFAULT_MAX_FILES,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_symbols: DEFAULT_MAX_SYMBOLS,
+            max_cached_bytes: DEFAULT_MAX_CACHED_BYTES,
             ignored_directories: [
                 ".git",
                 ".hg",
@@ -109,12 +114,24 @@ pub struct ContextMatch {
     pub symbol: Option<String>,
 }
 
+fn empty_content_cache() -> Arc<BTreeMap<String, String>> {
+    Arc::new(BTreeMap::new())
+}
+
+fn empty_symbol_lookup() -> Arc<BTreeMap<String, BTreeMap<u32, String>>> {
+    Arc::new(BTreeMap::new())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryIndex {
     pub root: PathBuf,
     pub files: Vec<IndexedFile>,
     pub symbols: Vec<IndexedSymbol>,
     pub total_bytes: u64,
+    #[serde(skip, default = "empty_content_cache")]
+    content_cache: Arc<BTreeMap<String, String>>,
+    #[serde(skip, default = "empty_symbol_lookup")]
+    symbol_lookup: Arc<BTreeMap<String, BTreeMap<u32, String>>>,
 }
 
 impl RepositoryIndex {
@@ -136,8 +153,19 @@ impl RepositoryIndex {
             files: Vec::new(),
             symbols: Vec::new(),
             total_bytes: 0,
+            content_cache: empty_content_cache(),
+            symbol_lookup: empty_symbol_lookup(),
         };
-        walk_directory(&root, &root, config, &mut index)?;
+        let mut content_cache = BTreeMap::new();
+        let mut cached_bytes = 0usize;
+        walk_directory(
+            &root,
+            &root,
+            config,
+            &mut index,
+            &mut content_cache,
+            &mut cached_bytes,
+        )?;
         index
             .files
             .sort_by(|left, right| left.path.cmp(&right.path));
@@ -147,6 +175,16 @@ impl RepositoryIndex {
                 .then(left.line.cmp(&right.line))
                 .then(left.name.cmp(&right.name))
         });
+        let mut symbol_lookup: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+        for symbol in &index.symbols {
+            symbol_lookup
+                .entry(symbol.path.clone())
+                .or_default()
+                .entry(symbol.line)
+                .or_insert_with(|| symbol.name.clone());
+        }
+        index.content_cache = Arc::new(content_cache);
+        index.symbol_lookup = Arc::new(symbol_lookup);
         Ok(index)
     }
 
@@ -174,9 +212,13 @@ impl RepositoryIndex {
             }
             let path_score = score_text(&file.path, &tokens) * 2;
             let path = self.root.join(&file.path);
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(_) => continue,
+            let content = if let Some(content) = self.content_cache.get(&file.path) {
+                Cow::Borrowed(content.as_str())
+            } else {
+                match fs::read_to_string(&path) {
+                    Ok(content) => Cow::Owned(content),
+                    Err(_) => continue,
+                }
             };
             let lines: Vec<&str> = content.lines().collect();
             for (index, line) in lines.iter().enumerate() {
@@ -185,10 +227,10 @@ impl RepositoryIndex {
                     continue;
                 }
                 let symbol = self
-                    .symbols
-                    .iter()
-                    .find(|symbol| symbol.path == file.path && symbol.line as usize == index + 1)
-                    .map(|symbol| symbol.name.clone());
+                    .symbol_lookup
+                    .get(&file.path)
+                    .and_then(|symbols| symbols.get(&(index as u32 + 1)))
+                    .cloned();
                 let symbol_score = symbol
                     .as_ref()
                     .map(|name| score_text(name, &tokens) * 4)
@@ -257,6 +299,8 @@ fn walk_directory(
     directory: &Path,
     config: &IndexConfig,
     index: &mut RepositoryIndex,
+    content_cache: &mut BTreeMap<String, String>,
+    cached_bytes: &mut usize,
 ) -> Result<(), RepositoryIndexError> {
     if index.files.len() >= config.max_files {
         return Ok(());
@@ -283,7 +327,7 @@ fn walk_directory(
             {
                 continue;
             }
-            walk_directory(root, &path, config, index)?;
+            walk_directory(root, &path, config, index, content_cache, cached_bytes)?;
             continue;
         }
         if !metadata.is_file() {
@@ -314,8 +358,8 @@ fn walk_directory(
             bytes: bytes.len() as u64,
             sha256,
         });
-        if index.symbols.len() < config.max_symbols {
-            if let Ok(content) = String::from_utf8(bytes) {
+        if let Ok(content) = String::from_utf8(bytes) {
+            if index.symbols.len() < config.max_symbols {
                 extract_symbols(
                     &relative,
                     &language,
@@ -323,6 +367,10 @@ fn walk_directory(
                     config.max_symbols,
                     &mut index.symbols,
                 );
+            }
+            if content.len() <= config.max_cached_bytes.saturating_sub(*cached_bytes) {
+                *cached_bytes = cached_bytes.saturating_add(content.len());
+                content_cache.insert(relative.clone(), content);
             }
         }
     }
@@ -474,6 +522,34 @@ mod tests {
             .context_items("planner", &SearchOptions::default())
             .unwrap();
         assert!(context[0].label.starts_with("agent.rs:"));
+    }
+
+    #[test]
+    fn content_cache_is_bounded_and_search_falls_back_safely() {
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("cached.rs"), "fn cached() {}\n").unwrap();
+        let cached = RepositoryIndex::build(directory.path(), &IndexConfig::default()).unwrap();
+        assert_eq!(cached.content_cache.len(), 1);
+        assert!(cached
+            .search("cached", &SearchOptions::default())
+            .unwrap()
+            .iter()
+            .any(|item| item.path == "cached.rs"));
+
+        let uncached = RepositoryIndex::build(
+            directory.path(),
+            &IndexConfig {
+                max_cached_bytes: 0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(uncached.content_cache.is_empty());
+        assert!(uncached
+            .search("cached", &SearchOptions::default())
+            .unwrap()
+            .iter()
+            .any(|item| item.path == "cached.rs"));
     }
 
     #[test]

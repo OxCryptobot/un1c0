@@ -1,0 +1,46 @@
+[
+  {
+    "concurrency": 1,
+    "baseline_p95_ms": 4.175702,
+    "optimized_p95_ms": 0.5804,
+    "p95_reduction_pct": 86.10054069950394,
+    "baseline_throughput_ops_per_sec": 262.86945482873534,
+    "optimized_throughput_ops_per_sec": 1889.6056049572157,
+    "throughput_gain_pct": 618.8380278676087,
+    "baseline_errors": 0,
+    "optimized_errors": 0
+  },
+  {
+    "concurrency": 2,
+    "baseline_p95_ms": 16.623617,
+    "optimized_p95_ms": 0.999374,
+    "p95_reduction_pct": 93.98822771241662,
+    "baseline_throughput_ops_per_sec": 216.3673807604855,
+    "optimized_throughput_ops_per_sec": 2596.286285338512,
+    "throughput_gain_pct": 1099.9434832612549,
+    "baseline_errors": 0,
+    "optimized_errors": 0
+  },
+  {
+    "concurrency": 4,
+    "baseline_p95_ms": 17.923313,
+    "optimized_p95_ms": 6.095569,
+    "p95_reduction_pct": 65.9908355112696,
+    "baseline_throughput_ops_per_sec": 318.5476497270418,
+    "optimized_throughput_ops_per_sec": 1155.0669656686105,
+    "throughput_gain_pct": 262.60413996410523,
+    "baseline_errors": 0,
+    "optimized_errors": 0
+  },
+  {
+    "concurrency": 8,
+    "baseline_p95_ms": 37.202256,
+    "optimized_p95_ms": 13.454338,
+    "p95_reduction_pct": 63.83461798660812,
+    "baseline_throughput_ops_per_sec": 249.1856791729798,
+    "optimized_throughput_ops_per_sec": 922.6521067932317,
+    "throughput_gain_pct": 270.26690693277953,
+    "baseline_errors": 0,
+    "optimized_errors": 0
+  }
+]
