@@ -7,6 +7,18 @@ set -euo pipefail
 
 VAULT_ADDR=${VAULT_ADDR:-http://127.0.0.1:8200}
 VAULT_TOKEN=${VAULT_TOKEN:-root-token}
+OUTPUT_ENV_FILE=${OUTPUT_ENV_FILE:-}
+
+write_secret_file() {
+  local name="$1" value="$2"
+  if [ -n "$OUTPUT_ENV_FILE" ]; then
+    umask 077
+    printf '%s=%s\n' "$name" "$value" >> "$OUTPUT_ENV_FILE"
+  fi
+  if [ "${GITHUB_ACTIONS:-false}" = "true" ] && [ -n "$value" ]; then
+    echo "::add-mask::$value"
+  fi
+}
 
 echo "Using VAULT_ADDR=$VAULT_ADDR"
 
@@ -23,9 +35,8 @@ curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -H "Content-Type: application/
   -d "{\"data\":{\"key\":\"$MASTER_KEY\",\"expiry\":\"$EXPIRY\"}}" \
   $VAULT_ADDR/v1/kv/data/master_key
 
-echo "::add-mask::$MASTER_KEY"
-echo "Created master key in Vault at kv/data/master_key. Do NOT share this log; copy the raw key from your local environment if needed."
-echo "Raw key (copy it now if you need to deliver it securely): $MASTER_KEY"
+write_secret_file MASTER_KEY "$MASTER_KEY"
+echo "Created master key in Vault at kv/data/master_key; the value is intentionally not printed."
 
 echo "Creating a policy 'read-master-key' that allows reading kv/data/master_key"
 cat > /tmp/read-master-key.hcl <<'HCL'
@@ -39,8 +50,8 @@ curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -H "Content-Type: application/
 
 echo "Creating token with 'read-master-key' policy"
 READ_TOKEN=$(curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -d '{"policies":["read-master-key"],"ttl":"1h"}' $VAULT_ADDR/v1/auth/token/create | jq -r '.auth.client_token') || true
-echo "Created a short-lived token for reading the master key (printed below for local PoC use)."
-echo "READ_TOKEN=$READ_TOKEN"
+write_secret_file READ_TOKEN "$READ_TOKEN"
+echo "Created a short-lived token for reading the master key; the value is intentionally not printed."
 
 echo "Creating an AppRole 'master-key-approle' for GitHub Actions PoC"
 cat > /tmp/approle-payload.json <<'JSON'
@@ -55,8 +66,8 @@ curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" -H "Content-Type: application/
 ROLE_ID=$(curl -sS -H "X-Vault-Token: $VAULT_TOKEN" $VAULT_ADDR/v1/auth/approle/role/master-key-approle/role-id | jq -r '.data.role_id') || true
 SECRET_ID=$(curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" $VAULT_ADDR/v1/auth/approle/role/master-key-approle/secret-id | jq -r '.data.secret_id') || true
 
-echo "AppRole created. For local PoC:"
-echo "ROLE_ID=$ROLE_ID"
-echo "SECRET_ID=$SECRET_ID"
+write_secret_file ROLE_ID "$ROLE_ID"
+write_secret_file SECRET_ID "$SECRET_ID"
+echo "AppRole created; role and secret IDs are intentionally not printed."
 
 echo "Initialization complete. Use the created token or AppRole credentials to read the master key via Vault API."

@@ -2,154 +2,112 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  GO_VERSION: '1.21'
+  ZIG_VERSION: '0.12.1'
 
 jobs:
-  build-test:
+  rust-python:
+    name: Rust and Python regression suite
     runs-on: ubuntu-latest
-    env:
-      GO_VERSION: '1.21'
-      ZIG_VERSION: '0.12.1'
     steps:
       - uses: actions/checkout@v4
-      - name: Enforce MASTER_KEY presence
-        # This step ensures the repository secret MASTER_KEY is set. Secrets are not
-        # exposed to workflows from forks; this causes CI to fail on forked PRs.
-        run: |
-          set -e
-          if [ -z "${{ secrets.MASTER_KEY }}" ]; then
-            echo "ERROR: MASTER_KEY secret is not configured for this repository."
-            echo "CI requires a MASTER_KEY to run. To obtain a master key, follow the project SECURITY policy.";
-            exit 1
-          fi
+
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-      - name: Setup Go
-        uses: actions/setup-go@v4
+          components: rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
+
+      - name: Check formatting for maintained Rust modules
+        run: |
+          rustfmt --check \
+            src/agentic.rs src/provider.rs src/provider_openai.rs src/repository.rs \
+            src/run_state.rs src/subagent.rs src/verification.rs \
+            src/bin/un1c0-agent.rs tests/provider_openai_integration.rs
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+      - name: Run Rust tests
+        run: cargo test --all-features --all-targets
+
+      - name: Run Python tests
+        run: python -m pytest -q
+
+  language-matrix:
+    name: Translation matrix
+    runs-on: ubuntu-latest
+    needs: rust-python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Install Zig from release tarball
+      - name: Install Zig
         run: |
-          set -eux
-          Z=${ZIG_VERSION}
-          ARCH=zig-linux-x86_64
-          URL="https://github.com/ziglang/zig/releases/download/${Z}/${ARCH}-${Z}.tar.xz"
-          echo "Downloading Zig from $URL"
-          curl -sSLo /tmp/zig.tar.xz "$URL"
-          sudo mkdir -p /opt/zig
-          sudo tar -xJ -C /opt -f /tmp/zig.tar.xz
-          # Symlink the zig binary into PATH
-          sudo ln -sf /opt/${ARCH}-${Z}/zig /usr/local/bin/zig
+          set -Eeuo pipefail
+          curl -fsSL "https://github.com/ziglang/zig/releases/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo ln -sf "/opt/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig
           zig version
-      - name: "Check & apply formatting: gofmt"
-        env:
-          GIT_AUTHOR_NAME: github-actions
-          GIT_AUTHOR_EMAIL: actions@github.com
-        run: |
-          set -eux
-          # List files that would be reformatted under -s simplifications
-          OUT=$(gofmt -s -l . || true)
-          if [ -n "$OUT" ]; then
-            echo "gofmt -s will reformat these files:";
-            echo "$OUT";
-            echo "Applying gofmt -s -w .";
-            gofmt -s -w .;
-            git config user.name "$GIT_AUTHOR_NAME";
-            git config user.email "$GIT_AUTHOR_EMAIL";
-            git add -A;
-            if git diff --cached --quiet; then
-              echo "No changes to commit after formatting.";
-            else
-              git commit -m "chore: apply gofmt -s formatting [skip ci]" || true;
-              # Only attempt to push if this run has permission (not a forked PR)
-              if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
-                HEAD_REPO_FULL_NAME="${{ github.event.pull_request.head.repo.full_name }}"
-                if [ "$HEAD_REPO_FULL_NAME" != "${{ github.repository }}" ]; then
-                  echo "Refusing to push formatting commit for forked PR (head repo: $HEAD_REPO_FULL_NAME).";
-                else
-                  git push origin HEAD:${{ github.ref_name }} || true;
-                fi
-              else
-                git push origin HEAD:${{ github.ref_name }} || true;
-              fi
-            fi
-          else
-            echo "gofmt reports no changes.";
-          fi
-      - name: "Check & apply formatting: zig fmt"
-        env:
-          GIT_AUTHOR_NAME: github-actions
-          GIT_AUTHOR_EMAIL: actions@github.com
-        run: |
-          set -eux
-          FILES=$(git ls-files '*.zig' || true)
-          if [ -n "$FILES" ]; then
-            echo "Running zig fmt on tracked .zig files";
-            zig fmt $FILES || true
-            git config user.name "$GIT_AUTHOR_NAME";
-            git config user.email "$GIT_AUTHOR_EMAIL";
-            git add -A;
-            if git diff --cached --quiet; then
-              echo "No changes to commit after zig fmt.";
-            else
-              git commit -m "chore: apply zig fmt formatting [skip ci]" || true;
-              if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
-                HEAD_REPO_FULL_NAME="${{ github.event.pull_request.head.repo.full_name }}"
-                if [ "$HEAD_REPO_FULL_NAME" != "${{ github.repository }}" ]; then
-                  echo "Refusing to push zig formatting commit for forked PR (head repo: $HEAD_REPO_FULL_NAME).";
-                else
-                  git push origin HEAD:${{ github.ref_name }} || true;
-                fi
-              else
-                git push origin HEAD:${{ github.ref_name }} || true;
-              fi
-            fi
-          else
-            echo "No .zig files tracked; skipping zig fmt run.";
-          fi
+      - name: Build release binary
+        run: cargo build --release
+      - name: Run translation matrix
+        run: ./scripts/test_matrix.sh
 
-      - name: Run go vet and go build (if applicable)
+  security:
+    name: Dependency and container security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Audit Rust dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate Compose configuration
+        run: docker compose -f vault/docker-compose.yml config --quiet
+      - name: Build admin-service image
+        run: docker build --file vault/admin_service/Dockerfile --tag un1c0-admin-service:ci vault/admin_service
+      - name: Inspect image user and healthcheck
         run: |
-          set -eux
-          # Run vet and build for any Go packages in the repository
-          if go list ./... >/dev/null 2>&1; then
-            go vet ./... || (echo "go vet failed"; exit 1)
-            go build ./... || (echo "go build failed"; exit 1)
-          else
-            echo "No Go packages to vet/build; skipping.";
-          fi
+          test "$(docker inspect --format '{{.Config.User}}' un1c0-admin-service:ci)" = "app"
+          docker inspect --format '{{json .Config.Healthcheck}}' un1c0-admin-service:ci
 
-      - name: Attempt to build tracked .zig files
-        run: |
-          set -eux
-          FILES=$(git ls-files '*.zig' || true)
-          if [ -n "$FILES" ]; then
-            echo "Attempting to build each tracked .zig file with 'zig build-exe' to detect obvious compile errors.";
-            FAIL=0
-            for f in $FILES; do
-              echo "Building $f";
-              # Build to a temp output to avoid clobbering repository
-              OUTBIN=$(mktemp -u /tmp/zig-bin-XXXX)
-              if ! zig build-exe "$f" -O ReleaseSmall -femit-bin="$OUTBIN" >/dev/null 2>&1; then
-                echo "zig failed to build $f";
-                FAIL=1
-              else
-                rm -f "$OUTBIN" || true
-              fi
-            done
-            if [ "$FAIL" -ne 0 ]; then
-              echo "One or more .zig files failed to compile.";
-              exit 1
-            fi
-          else
-            echo "No .zig files tracked; skipping zig build-exe checks.";
-          fi
-      - name: Run cargo test
-        run: cargo test --all -- --nocapture
-      - name: Show generated examples
-        run: |
-          if [ -d examples/generated ]; then ls -R examples/generated || true; fi
+  e2e:
+    name: Isolated Vault E2E
+    needs: [rust-python, security]
+    uses: ./.github/workflows/e2e_wrapped_flow.yml
+    secrets: inherit

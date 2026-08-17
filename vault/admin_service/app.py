@@ -1,6 +1,6 @@
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, Response, request, jsonify
 import requests
 import logging
 import datetime
@@ -11,6 +11,7 @@ VAULT_ADDR = os.environ.get('VAULT_ADDR', 'http://vault:8200')
 VAULT_TOKEN = os.environ.get('VAULT_TOKEN', 'root-token')
 ADMIN_API_KEY = os.environ.get('ADMIN_API_KEY', 'changeme')
 APPROLE_NAME = os.environ.get('APPROLE_NAME', 'master-key-approle')
+HTTP_TIMEOUT_SECONDS = float(os.environ.get('HTTP_TIMEOUT_SECONDS', '3'))
 
 KV_ACCESSORS_PATH = 'kv/data/approle_accessors'
 
@@ -20,23 +21,30 @@ headers = {
 
 # Logging setup: write to container-mounted `/logs` so the host/CI can collect logs.
 LOG_DIR = os.environ.get('ADMIN_LOG_DIR', '/logs')
-os.makedirs(LOG_DIR, exist_ok=True)
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except PermissionError:
+    LOG_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'un1c0-admin-logs')
+    os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, 'admin_service.log')
-logging.basicConfig(level=logging.INFO, filename=LOG_FILE,
-                    format='%(asctime)s %(levelname)s %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()],
+    format='%(asctime)s %(levelname)s %(message)s',
+)
 logger = logging.getLogger('admin_service')
 
 
 def vault_post(path, data=None):
     url = VAULT_ADDR.rstrip('/') + '/v1/' + path.lstrip('/')
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=HTTP_TIMEOUT_SECONDS)
     r.raise_for_status()
     return r.json()
 
 
 def vault_get(path):
     url = VAULT_ADDR.rstrip('/') + '/v1/' + path.lstrip('/')
-    r = requests.get(url, headers=headers)
+    r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT_SECONDS)
     r.raise_for_status()
     return r.json()
 
@@ -44,6 +52,21 @@ def vault_get(path):
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
+
+
+@app.route('/ready', methods=['GET'])
+def ready():
+    try:
+        response = requests.get(
+            VAULT_ADDR.rstrip('/') + '/v1/sys/health',
+            headers=headers,
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            return jsonify({'status': 'not_ready', 'vault_status': response.status_code}), 503
+    except requests.RequestException:
+        return jsonify({'status': 'not_ready'}), 503
+    return jsonify({'status': 'ready'})
 
 
 @app.route('/issue-secret-id', methods=['POST'])
@@ -318,6 +341,26 @@ def metrics():
         return jsonify({'error': 'failed to generate metrics'}), 500
 
 
+@app.route('/metrics/prometheus', methods=['GET'])
+def metrics_prometheus():
+    try:
+        payload = metrics().get_json() or {}
+        lines = [
+            '# HELP un1c0_admin_status Admin service health status.',
+            '# TYPE un1c0_admin_status gauge',
+            f"un1c0_admin_status {1 if payload.get('status') == 'ok' else 0}",
+            '# HELP un1c0_admin_accessor_count Stored AppRole accessor count.',
+            '# TYPE un1c0_admin_accessor_count gauge',
+            f"un1c0_admin_accessor_count {int(payload.get('accessor_count', 0))}",
+            '# HELP un1c0_admin_issuance_event_count Stored issuance event count.',
+            '# TYPE un1c0_admin_issuance_event_count gauge',
+            f"un1c0_admin_issuance_event_count {int(payload.get('issuance_event_count', 0))}",
+        ]
+        return Response('\\n'.join(lines) + '\\n', mimetype='text/plain')
+    except Exception:
+        return Response('un1c0_admin_status 0\\n', status=503, mimetype='text/plain')
+
+
 @app.route('/issue-job-secret', methods=['POST'])
 def issue_job_secret():
     """Issue a job-specific wrapped secret for dynamic per-job authentication."""
@@ -383,4 +426,4 @@ def issue_job_secret():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('ADMIN_PORT', '5000')))

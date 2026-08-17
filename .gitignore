@@ -73,3 +73,6 @@ temp/
 
 # Node modules (if any JS tooling)
 node_modules/
+
+# Rust build outputs
+target/

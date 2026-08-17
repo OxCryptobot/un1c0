@@ -1,14 +1,12 @@
-name: E2E Wrapped Flow (ngrok)
+name: Vault wrapped-secret E2E
 
 on:
   workflow_dispatch:
     inputs:
       ngrok_authtoken:
-        description: 'ngrok authtoken (set as secret NGROK_AUTHTOKEN instead)'
+        description: "ngrok authtoken (prefer secret NGROK_AUTHTOKEN)"
         required: false
   workflow_call:
-    # Enable as reusable workflow for gated CI patterns
-    # All secrets are optional to support both local and production environments
     secrets:
       NGROK_AUTHTOKEN:
         required: false
@@ -24,107 +22,136 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
-      VAULT_ADDR: http://127.0.0.1:8200
       ADMIN_API_KEY: local-secret
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Provision client certs (from secrets or generate)
+      - name: Allocate isolated ports and Compose namespace
+        shell: bash
         run: |
-          set -eux
+          set -Eeuo pipefail
+          eval "$(./scripts/allocate_ci_ports.sh)"
+          {
+            echo "VAULT_PORT=$VAULT_PORT"
+            echo "ADMIN_PORT=$ADMIN_PORT"
+            echo "NGINX_PORT=$NGINX_PORT"
+            echo "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
+            echo "VAULT_ADDR=http://127.0.0.1:$VAULT_PORT"
+          } >> "$GITHUB_ENV"
+          echo "Using Compose project $COMPOSE_PROJECT_NAME with isolated ports."
+
+      - name: Provision client certs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           mkdir -p vault/certs
           if [ -n "${{ secrets.CLIENT_CERT_BASE64 || '' }}" ] && [ -n "${{ secrets.CLIENT_KEY_BASE64 || '' }}" ]; then
-            echo "Writing client cert/key from secrets"
-            echo "${{ secrets.CLIENT_CERT_BASE64 }}" | base64 -d > vault/certs/client.crt
-            echo "${{ secrets.CLIENT_KEY_BASE64 }}" | base64 -d > vault/certs/client.key
+            printf '%s' "${{ secrets.CLIENT_CERT_BASE64 }}" | base64 -d > vault/certs/client.crt
+            printf '%s' "${{ secrets.CLIENT_KEY_BASE64 }}" | base64 -d > vault/certs/client.key
           else
-            echo "CLIENT certs not provided via secrets; generating local certs"
             ./vault/generate_certs.sh
           fi
+          chmod 600 vault/certs/client.key
 
-      - name: Setup Docker Compose
+      - name: Build and start isolated stack
+        shell: bash
         run: |
-          # Override VAULT_ADDR for the containers' own network: the job-level
-          # VAULT_ADDR (http://127.0.0.1:8200) is for host-side curl calls and
-          # would otherwise leak into admin-service's compose substitution,
-          # pointing it at itself instead of the vault container.
-          VAULT_ADDR=http://vault:8200 docker compose -f vault/docker-compose.yml up --build -d
+          set -Eeuo pipefail
+          VAULT_ADDR=http://vault:8200 docker compose -p "$COMPOSE_PROJECT_NAME" -f vault/docker-compose.yml up --build -d
 
-      - name: Wait for services
+      - name: Wait for readiness
+        shell: bash
         run: |
-          # Wait for Vault, admin service, and the nginx mTLS listener
-          for i in {1..30}; do
-            if curl -sS http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1; then break; fi
-            echo "Waiting for Vault..."; sleep 2
-          done
-          for i in {1..30}; do
-            if curl -sS http://127.0.0.1:5000/health >/dev/null 2>&1; then break; fi
-            echo "Waiting for admin-service..."; sleep 2
-          done
-          for i in {1..30}; do
-            if timeout 1 bash -c "</dev/tcp/127.0.0.1/8443" 2>/dev/null; then break; fi
-            echo "Waiting for nginx (mTLS listener)..."; sleep 2
-          done
+          set -Eeuo pipefail
+          wait_http() {
+            local url="$1"
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error --max-time 3 "$url" >/dev/null; then return 0; fi
+              sleep 2
+            done
+            echo "Timed out waiting for $url" >&2
+            return 1
+          }
+          wait_tcp() {
+            local host="$1" port="$2"
+            for _ in $(seq 1 60); do
+              if timeout 1 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then return 0; fi
+              sleep 2
+            done
+            echo "Timed out waiting for $host:$port" >&2
+            return 1
+          }
+          wait_http "$VAULT_ADDR/v1/sys/health"
+          wait_http "http://127.0.0.1:$ADMIN_PORT/health"
+          wait_http "http://127.0.0.1:$ADMIN_PORT/ready"
+          wait_tcp 127.0.0.1 "$NGINX_PORT"
 
-      - name: Initialize Vault (KV, policy, AppRole)
+      - name: Initialize Vault
+        shell: bash
         run: |
-          set -eux
-          ./vault/init_vault.sh
+          set -Eeuo pipefail
+          VAULT_ADDR="$VAULT_ADDR" VAULT_TOKEN="${VAULT_TOKEN:-root-token}" ./vault/init_vault.sh
 
-      - name: Request wrapped secret via local admin service (mTLS)
+      - name: Request wrapped secret via mTLS
+        shell: bash
         run: |
-          set -eu
-          # Use mTLS only; do not include any API-key header
-          # (no -x here: it would trace $RESP/$WRAP_TOKEN into the log before masking takes effect)
-          RESP=$(curl -sS --cert vault/certs/client.crt --key vault/certs/client.key -k -X POST -H "Content-Type: application/json" -d '{"role":"master-key-approle","wrap_ttl":"60s"}' https://localhost:8443/issue-wrapped-secret-id)
-          WRAP_TOKEN=$(echo "$RESP" | jq -r '.wrap_token // empty')
-          if [ -n "$WRAP_TOKEN" ]; then echo "::add-mask::$WRAP_TOKEN"; fi
-          echo "$RESP" | jq .
-          if [ -z "$WRAP_TOKEN" ]; then echo "No wrap_token returned"; exit 1; fi
-          echo "WRAP_TOKEN=$WRAP_TOKEN" >> "$GITHUB_ENV"
+          set -Eeuo pipefail
+          response=$(curl --silent --show-error --fail --cert vault/certs/client.crt --key vault/certs/client.key -k \
+            -X POST -H "Content-Type: application/json" \
+            -d '{"role":"master-key-approle","wrap_ttl":"60s"}' \
+            "https://127.0.0.1:$NGINX_PORT/issue-wrapped-secret-id")
+          wrap_token=$(printf '%s' "$response" | jq -r '.wrap_token // empty')
+          if [ -n "$wrap_token" ]; then echo "::add-mask::$wrap_token"; fi
+          if [ -z "$wrap_token" ]; then echo "No wrap_token returned" >&2; exit 1; fi
+          printf 'WRAP_TOKEN=%s\n' "$wrap_token" >> "$GITHUB_ENV"
 
       - name: Unwrap token with local Vault
+        shell: bash
         run: |
-          set -eu
-          # Use wrap token to unwrap (no -x: would trace $UNWRAP/$SECRET_ID before masking)
-          UNWRAP=$(curl -sS -X POST -H "X-Vault-Token: $WRAP_TOKEN" "$VAULT_ADDR/v1/sys/wrapping/unwrap")
-          SECRET_ID=$(echo "$UNWRAP" | jq -r '.data.secret_id // empty')
-          if [ -n "$SECRET_ID" ]; then echo "::add-mask::$SECRET_ID"; fi
-          echo "$UNWRAP" | jq .
-          if [ -z "$SECRET_ID" ]; then echo "failed to unwrap secret_id"; exit 1; fi
-          echo "Obtained SECRET_ID from unwrap"
-          echo "SECRET_ID=$SECRET_ID" >> "$GITHUB_ENV"
+          set -Eeuo pipefail
+          unwrap=$(curl --silent --show-error --fail -X POST -H "X-Vault-Token: $WRAP_TOKEN" "$VAULT_ADDR/v1/sys/wrapping/unwrap")
+          secret_id=$(printf '%s' "$unwrap" | jq -r '.data.secret_id // empty')
+          if [ -n "$secret_id" ]; then echo "::add-mask::$secret_id"; fi
+          if [ -z "$secret_id" ]; then echo "failed to unwrap secret_id" >&2; exit 1; fi
+          printf 'SECRET_ID=%s\n' "$secret_id" >> "$GITHUB_ENV"
 
-      - name: Login via AppRole with secret_id and fetch MASTER_KEY
+      - name: Validate AppRole path
+        shell: bash
         env:
           VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
-          KEY_ADMIN_TOKEN: ${{ secrets.KEY_ADMIN_TOKEN || '' }}
         run: |
-          set -eux
-          RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "{\"role_id\": \"$VAULT_ROLE_ID\", \"secret_id\": \"$SECRET_ID\"}" "$VAULT_ADDR/v1/auth/approle/login")
-          TOKEN=$(echo "$RESP" | jq -r '.auth.client_token')
-          echo "Vault token acquired"
-          RESP2=$(curl -sS -H "X-Vault-Token: $TOKEN" "$VAULT_ADDR/v1/kv/data/master_key")
-          echo "$RESP2" | jq .
-          KEY=$(echo "$RESP2" | jq -r '.data.data.key // empty') || true
-          if [ -n "$KEY_ADMIN_TOKEN" ] && [ -n "$KEY" ]; then
-            printf '%s' "$KEY_ADMIN_TOKEN" | gh auth login --with-token
-            gh secret set MASTER_KEY --body "$KEY" --repo "${{ github.repository }}"
-            echo "MASTER_KEY written to repository secrets (E2E run)."
-          else
-            echo "KEY_ADMIN_TOKEN not provided or KEY empty; skipping writing repository secret."
+          set -Eeuo pipefail
+          role_id="${VAULT_ROLE_ID:-}"
+          if [ -z "$role_id" ]; then
+            role_id=$(curl --silent --show-error --fail -H "X-Vault-Token: ${VAULT_TOKEN:-root-token}" \
+              "$VAULT_ADDR/v1/auth/approle/role/master-key-approle/role-id" | jq -r '.data.role_id // empty')
           fi
+          if [ -z "$role_id" ]; then
+            echo "Could not resolve the AppRole role ID." >&2
+            exit 1
+          fi
+          response=$(curl --silent --show-error --fail -X POST -H "Content-Type: application/json" \
+            -d "{\"role_id\": \"$role_id\", \"secret_id\": \"$SECRET_ID\"}" \
+            "$VAULT_ADDR/v1/auth/approle/login")
+          token=$(printf '%s' "$response" | jq -r '.auth.client_token // empty')
+          if [ -n "$token" ]; then echo "::add-mask::$token"; fi
+          if [ -z "$token" ]; then echo "AppRole login did not return a token" >&2; exit 1; fi
+          echo "AppRole login succeeded."
 
-      - name: Dump container logs on failure
+      - name: Dump sanitized service logs on failure
         if: failure()
+        shell: bash
         run: |
-          docker compose -f vault/docker-compose.yml logs
-          echo "--- vault/admin_service/logs/admin_service.log ---"
-          cat vault/admin_service/logs/admin_service.log 2>/dev/null || echo "(no admin_service.log found)"
+          set +e
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f vault/docker-compose.yml logs --no-color
+          docker compose -p "$COMPOSE_PROJECT_NAME" -f vault/docker-compose.yml exec -T admin-service sh -c 'tail -200 /logs/admin_service.log' 2>/dev/null || true
 
-      - name: Cleanup docker compose
+      - name: Cleanup isolated stack
         if: always()
+        shell: bash
         run: |
-          docker compose -f vault/docker-compose.yml down --volumes --remove-orphans
+          docker compose -p "${COMPOSE_PROJECT_NAME:-un1c0-e2e-cleanup}" -f vault/docker-compose.yml down --volumes --remove-orphans

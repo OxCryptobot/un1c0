@@ -1,0 +1,29 @@
+groups:
+  - name: un1c0-admin
+    rules:
+      - alert: Un1c0AdminDown
+        expr: up{job="admin-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "UN1C⓪ admin service is down"
+          description: "The admin-service metrics target has been unavailable for two minutes."
+
+      - alert: Un1c0AdminUnhealthy
+        expr: un1c0_admin_status{job="admin-service"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "UN1C⓪ admin service reports unhealthy"
+          description: "The admin service health metric is zero."
+
+      - alert: Un1c0AccessorGrowth
+        expr: increase(un1c0_admin_accessor_count{job="admin-service"}[15m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusual AppRole accessor growth"
+          description: "Accessor count increased by more than 100 in fifteen minutes."

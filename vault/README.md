@@ -443,3 +443,12 @@ docker compose exec admin-service curl -k \
 
 **Status:** Production Ready ✅  
 **Last Updated:** November 25, 2025
+
+
+## Production and CI hardening
+
+The Compose stack now supports environment-driven host ports. Use `VAULT_PORT`, `ADMIN_PORT`, and `NGINX_PORT` when running parallel local or CI instances; service-to-service traffic remains on the private Compose network. The admin service exposes `/health` for process liveness, `/ready` for Vault dependency readiness, `/metrics` for JSON diagnostics, and `/metrics/prometheus` for sanitized Prometheus samples.
+
+The admin image runs as a non-root user with a read-only root filesystem, bounded temporary storage, dropped capabilities, no-new-privileges, pinned Python base version, and an explicit healthcheck. The Compose services include healthchecks, restart policies, isolated log volume handling, and safer defaults. The CI E2E workflow allocates ports per run, uses a unique Compose project namespace, waits for bounded readiness, masks credentials, retains sanitized logs on failure, and always removes containers, volumes, and networks.
+
+Prometheus examples are in `monitoring/prometheus.yml` and `monitoring/rules.yml`. The tag-driven image workflow is `../.github/workflows/release.yml`; it publishes a provenance/SBOM-enabled admin-service image to GHCR only after the release tag reaches the workflow.
