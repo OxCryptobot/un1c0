@@ -1,0 +1,18 @@
+admin:
+  replicaCount: 2
+  image:
+    tag: ""
+    digest: "sha256:REPLACE_WITH_RELEASE_DIGEST"
+  existingSecret: un1c0-runtime-secrets
+  vaultAddress: "https://vault.example.invalid"
+
+nginx:
+  replicaCount: 2
+  image:
+    tag: "1.27-alpine"
+    digest: ""
+  existingTlsSecret: un1c0-mtls
+
+vault:
+  enabled: false
+  address: "https://vault.example.invalid"

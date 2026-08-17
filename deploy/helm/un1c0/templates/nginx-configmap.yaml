@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "un1c0.fullname" . }}-nginx
+  labels:
+    {{- include "un1c0.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    limit_req_zone $ssl_client_s_dn zone=mtls_limit:10m rate=30r/m;
+    limit_req_status 429;
+
+    server {
+        listen 8443 ssl;
+        server_name _;
+
+        ssl_certificate /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_client_certificate /etc/nginx/certs/ca.crt;
+        ssl_verify_client on;
+
+        location / {
+            limit_req zone=mtls_limit burst=10 nodelay;
+            proxy_pass http://{{ include "un1c0.fullname" . }}-admin:5000;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-SSL-Client-S-DN $ssl_client_s_dn;
+        }
+    }

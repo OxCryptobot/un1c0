@@ -1,0 +1,79 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+admin:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/oxcryptobot/un1c0/admin-service
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5000
+  existingSecret: un1c0-runtime-secrets
+  secretKeys:
+    vaultToken: VAULT_TOKEN
+    adminApiKey: ADMIN_API_KEY
+  vaultAddress: ""
+  httpTimeoutSeconds: "3"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+nginx:
+  replicaCount: 2
+  image:
+    repository: nginx
+    tag: 1.27-alpine
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8443
+  existingTlsSecret: un1c0-mtls
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+vault:
+  enabled: false
+  address: ""
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+  annotations: {}
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+networkPolicy:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

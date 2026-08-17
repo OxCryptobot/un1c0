@@ -1,0 +1,178 @@
+{
+  "operations": [
+    "canary_report_from_workspace",
+    "checkpoint_save_load",
+    "evolution_signature_verify",
+    "plan_validate",
+    "provider_route",
+    "repository_search",
+    "verification_manifest"
+  ],
+  "concurrencies": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "baseline_concurrency": 1,
+  "peak_concurrency": 8,
+  "zero_error_rows": true,
+  "baseline": {
+    "plan_validate": {
+      "operation": "plan_validate",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 0.646632,
+      "throughput_ops_per_sec": 3092949.312746663,
+      "p50_ns": 210,
+      "p95_ns": 231,
+      "p99_ns": 250
+    },
+    "repository_search": {
+      "operation": "repository_search",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 7608.339285,
+      "throughput_ops_per_sec": 262.86945482873534,
+      "p50_ns": 3890025,
+      "p95_ns": 4175702,
+      "p99_ns": 4544164
+    },
+    "provider_route": {
+      "operation": "provider_route",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 76.53805,
+      "throughput_ops_per_sec": 26130.79376858961,
+      "p50_ns": 36615,
+      "p95_ns": 49725,
+      "p99_ns": 65949
+    },
+    "checkpoint_save_load": {
+      "operation": "checkpoint_save_load",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 26.689495,
+      "throughput_ops_per_sec": 74935.85022871358,
+      "p50_ns": 12759,
+      "p95_ns": 13852,
+      "p99_ns": 24196
+    },
+    "verification_manifest": {
+      "operation": "verification_manifest",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 3.778829,
+      "throughput_ops_per_sec": 529264.489078495,
+      "p50_ns": 1733,
+      "p95_ns": 1803,
+      "p99_ns": 1913
+    },
+    "evolution_signature_verify": {
+      "operation": "evolution_signature_verify",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 60.450675000000004,
+      "throughput_ops_per_sec": 33084.82494198783,
+      "p50_ns": 29335,
+      "p95_ns": 30487,
+      "p99_ns": 41634
+    },
+    "canary_report_from_workspace": {
+      "operation": "canary_report_from_workspace",
+      "concurrency": 1,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 12.081451,
+      "throughput_ops_per_sec": 165543.02955828732,
+      "p50_ns": 5799,
+      "p95_ns": 6029,
+      "p99_ns": 7121
+    }
+  },
+  "peak": {
+    "plan_validate": {
+      "operation": "plan_validate",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 0.664163,
+      "throughput_ops_per_sec": 3011308.97083999,
+      "p50_ns": 221,
+      "p95_ns": 480,
+      "p99_ns": 801
+    },
+    "repository_search": {
+      "operation": "repository_search",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 8026.143423,
+      "throughput_ops_per_sec": 249.1856791729798,
+      "p50_ns": 30231267,
+      "p95_ns": 37202256,
+      "p99_ns": 39684855
+    },
+    "provider_route": {
+      "operation": "provider_route",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 64.504972,
+      "throughput_ops_per_sec": 31005.361881251574,
+      "p50_ns": 82405,
+      "p95_ns": 987723,
+      "p99_ns": 1843012
+    },
+    "checkpoint_save_load": {
+      "operation": "checkpoint_save_load",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 21.763991,
+      "throughput_ops_per_sec": 91894.91026714724,
+      "p50_ns": 56575,
+      "p95_ns": 151420,
+      "p99_ns": 431010
+    },
+    "verification_manifest": {
+      "operation": "verification_manifest",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 3.0931029999999997,
+      "throughput_ops_per_sec": 646599.8707446859,
+      "p50_ns": 3225,
+      "p95_ns": 40575,
+      "p99_ns": 68503
+    },
+    "evolution_signature_verify": {
+      "operation": "evolution_signature_verify",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 16.304048,
+      "throughput_ops_per_sec": 122668.92246637153,
+      "p50_ns": 30297,
+      "p95_ns": 48453,
+      "p99_ns": 318983
+    },
+    "canary_report_from_workspace": {
+      "operation": "canary_report_from_workspace",
+      "concurrency": 8,
+      "samples": 2000,
+      "errors": 0,
+      "elapsed_ms": 7.785356,
+      "throughput_ops_per_sec": 256892.55571614194,
+      "p50_ns": 19429,
+      "p95_ns": 79390,
+      "p99_ns": 148043
+    }
+  }
+}

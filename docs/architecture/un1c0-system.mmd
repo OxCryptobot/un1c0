@@ -1,0 +1,39 @@
+flowchart LR
+    SRC[Source languages and user goals] --> UEG[UEG language-neutral IR]
+    UEG --> PLAN[Typed Plan and Action contracts]
+    PLAN --> ROUTER[Provider router\nstructured output + fallback]
+    ROUTER --> VALIDATE[Plan validator\ncapability and policy checks]
+    VALIDATE --> RUNTIME[Local-first Runtime]
+
+    RUNTIME --> WORKSPACE[Bounded Workspace]
+    RUNTIME --> JOURNAL[Append-only Event Journal]
+    RUNTIME --> MEMORY[Bounded Memory and retrieval]
+    RUNTIME --> CHECKPOINT[Plan-hashed checkpoints]
+    RUNTIME --> SUBAGENT[Bounded subagents + merge gate]
+
+    RUNTIME --> CONSENT[Consent-scoped adapters]
+    CONSENT --> MCP[MCP]
+    CONSENT --> SKILL[Skills]
+    CONSENT --> API[API and Web]
+    CONSENT --> LSP[LSP]
+
+    RUNTIME --> VERIFY[Fail-closed verification loop]
+    VERIFY --> SANDBOX[Rootless or isolated verifier]
+    SANDBOX --> GATES[Format, lint, compile, test, security]
+    GATES --> EVIDENCE[Bounded evidence and diagnostics]
+
+    RUNTIME --> EVOLVE[Controlled evolution ledger]
+    EVOLVE --> SIGN[Ed25519 signatures + trusted signer store]
+    EVOLVE --> CANARY[Workspace-derived canary reports]
+    CANARY --> ROLLBACK[Apply or rollback]
+
+    OPS[Vault + admin service + nginx mTLS] --> OBS[Prometheus metrics and health probes]
+    VERIFY --> OPS
+    RUNTIME --> OPS
+
+    classDef core fill:#15395b,stroke:#6cb4ee,color:#fff;
+    classDef trust fill:#3c2a66,stroke:#c6a6ff,color:#fff;
+    classDef ops fill:#315b3c,stroke:#a8e6b0,color:#fff;
+    class UEG,PLAN,ROUTER,VALIDATE,RUNTIME core;
+    class CONSENT,VERIFY,EVOLVE,SIGN,CANARY,ROLLBACK trust;
+    class OPS,OBS ops;

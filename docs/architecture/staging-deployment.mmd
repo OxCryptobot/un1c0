@@ -1,0 +1,41 @@
+flowchart TB
+    USER[Operator or local agent client] --> CLI[un1c0-agent CLI]
+    CLI --> LOCAL[Local-first agent runtime]
+    LOCAL --> UEG[UEG + planner/provider boundary]
+    LOCAL --> VERIFY[Isolated verification backend]
+    LOCAL --> EVOLVE[Signed evolution ledger]
+
+    subgraph LOCALSTACK[Validated local Compose stack]
+        VAULT[Vault dev or external Vault]
+        ADMIN[Admin service\nhealth readiness metrics]
+        NGINX[nginx mTLS terminator]
+        NGINX --> ADMIN
+        ADMIN --> VAULT
+        NGINX --> METRICS[Prometheus scrape]
+    end
+
+    VERIFY --> NGINX
+    EVOLVE --> NGINX
+
+    subgraph STAGING[Future authorized staging Kubernetes cluster]
+        HELM[Helm release\nimmutable images + staging values]
+        K8SVAULT[Vault integration\nexternal secret references]
+        K8SADMIN[Admin deployment\nnon-root read-only]
+        K8SNGINX[Ingress or mTLS gateway]
+        K8SOBS[Prometheus/Grafana]
+        HELM --> K8SVAULT
+        HELM --> K8SADMIN
+        HELM --> K8SNGINX
+        K8SADMIN --> K8SOBS
+        K8SNGINX --> K8SOBS
+    end
+
+    LOCALSTACK -. validated image/config baseline .-> HELM
+    USER -. explicit approval required for mutation .-> HELM
+
+    classDef local fill:#15395b,stroke:#6cb4ee,color:#fff;
+    classDef ops fill:#315b3c,stroke:#a8e6b0,color:#fff;
+    classDef gated fill:#6b3b32,stroke:#ffb38a,color:#fff;
+    class LOCAL,CLI,UEG,VERIFY,EVOLVE local;
+    class VAULT,ADMIN,NGINX,METRICS,K8SVAULT,K8SADMIN,K8SNGINX,K8SOBS ops;
+    class HELM,STAGING gated;
