@@ -45,7 +45,7 @@ spec:
       serviceAccountName: {{ include "un1c0.serviceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.nginx.podSecurityContext | nindent 8 }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       containers:
@@ -55,10 +55,7 @@ spec:
           command: ["nginx"]
           args: ["-g", "daemon off;"]
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
-            capabilities:
-              drop: [ALL]
-              add: [CHOWN, SETUID, SETGID, DAC_READ_SEARCH]
+            {{- toYaml .Values.nginx.containerSecurityContext | nindent 12 }}
           ports:
             - name: https
               containerPort: 8443

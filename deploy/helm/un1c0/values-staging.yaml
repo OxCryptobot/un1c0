@@ -9,9 +9,14 @@ admin:
 nginx:
   replicaCount: 2
   image:
-    tag: "1.27-alpine"
-    digest: ""
+    tag: ""
+    digest: "sha256:REPLACE_WITH_NGINX_RELEASE_DIGEST"
   existingTlsSecret: un1c0-mtls
+
+networkPolicy:
+  externalVaultCidr: ""
+  nginxIngressCidr: ""
+  vaultPort: 443
 
 vault:
   enabled: false

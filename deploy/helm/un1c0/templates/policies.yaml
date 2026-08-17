@@ -57,10 +57,11 @@ spec:
           port: 5000
   egress:
     - to:
-        - namespaceSelector: {}
+        - ipBlock:
+            cidr: {{ required "networkPolicy.externalVaultCidr is required for staging" .Values.networkPolicy.externalVaultCidr | quote }}
       ports:
         - protocol: TCP
-          port: 8200
+          port: {{ .Values.networkPolicy.vaultPort }}
     - to:
         - namespaceSelector: {}
       ports:
@@ -84,7 +85,10 @@ spec:
       app.kubernetes.io/component: nginx
   policyTypes: [Ingress, Egress]
   ingress:
-    - ports:
+    - from:
+        - ipBlock:
+            cidr: {{ required "networkPolicy.nginxIngressCidr is required for staging" .Values.networkPolicy.nginxIngressCidr | quote }}
+      ports:
         - protocol: TCP
           port: 8443
   egress:

@@ -45,7 +45,7 @@ spec:
       serviceAccountName: {{ include "un1c0.serviceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.admin.podSecurityContext | nindent 8 }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       containers:
@@ -53,7 +53,7 @@ spec:
           image: {{ include "un1c0.adminImage" . | quote }}
           imagePullPolicy: {{ .Values.admin.image.pullPolicy }}
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- toYaml .Values.admin.containerSecurityContext | nindent 12 }}
           ports:
             - name: http
               containerPort: 5000

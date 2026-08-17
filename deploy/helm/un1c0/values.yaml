@@ -5,6 +5,18 @@ imagePullSecrets: []
 
 admin:
   replicaCount: 2
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
   image:
     repository: ghcr.io/oxcryptobot/un1c0/admin-service
     tag: latest
@@ -29,6 +41,18 @@ admin:
 
 nginx:
   replicaCount: 2
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
   image:
     repository: nginx
     tag: 1.27-alpine
@@ -56,19 +80,11 @@ serviceAccount:
   annotations: {}
   name: ""
 
-podSecurityContext:
-  runAsNonRoot: true
-  seccompProfile:
-    type: RuntimeDefault
-
-containerSecurityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop: [ALL]
-
 networkPolicy:
   enabled: true
+  externalVaultCidr: ""
+  nginxIngressCidr: ""
+  vaultPort: 8200
 
 podDisruptionBudget:
   enabled: true

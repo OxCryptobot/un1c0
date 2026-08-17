@@ -26,9 +26,11 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end }}
 
 {{- define "un1c0.adminImage" -}}
-{{- if .Values.admin.image.digest }}{{ .Values.admin.image.repository }}@{{ .Values.admin.image.digest }}{{ else }}{{ .Values.admin.image.repository }}:{{ .Values.admin.image.tag }}{{ end }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.admin.image.digest) }}{{ fail "admin.image.digest must be a lowercase sha256 digest" }}{{ end }}
+{{- .Values.admin.image.repository }}@{{ .Values.admin.image.digest }}
 {{- end }}
 
 {{- define "un1c0.nginxImage" -}}
-{{- if .Values.nginx.image.digest }}{{ .Values.nginx.image.repository }}@{{ .Values.nginx.image.digest }}{{ else }}{{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}{{ end }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.nginx.image.digest) }}{{ fail "nginx.image.digest must be a lowercase sha256 digest" }}{{ end }}
+{{- .Values.nginx.image.repository }}@{{ .Values.nginx.image.digest }}
 {{- end }}
