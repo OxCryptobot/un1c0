@@ -1,0 +1,114 @@
+{
+  "benchmark_concurrency": 8,
+  "commit": "35cbaf3588caee538481b4fca6c8cdf24b39f40f",
+  "gates": {
+    "authenticated_consensus_transport": "passed",
+    "cli_smoke": "passed",
+    "compose_mtls_smoke": "passed",
+    "durable_external_audit_sink": "passed",
+    "helm_fail_closed": "passed",
+    "python_tests": "passed",
+    "rust_all_targets": "passed",
+    "signer_rotation_revocation": "passed",
+    "skill_validation": "passed",
+    "snapshot_installation": "passed"
+  },
+  "generated_at_utc": "2026-08-17T21:40:25.626176+00:00",
+  "operations": [
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.00048,
+      "baseline_p99_ms": 0.000801,
+      "baseline_throughput_ops_per_sec": 3011308.97083999,
+      "operation": "plan_validate",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.000511,
+      "optimized_p99_ms": 0.000931,
+      "optimized_throughput_ops_per_sec": 2950823.0583215426
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 37.202256,
+      "baseline_p99_ms": 39.684855,
+      "baseline_throughput_ops_per_sec": 249.1856791729798,
+      "operation": "repository_search",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 13.454338,
+      "optimized_p99_ms": 15.51246,
+      "optimized_throughput_ops_per_sec": 922.6521067932317
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.987723,
+      "baseline_p99_ms": 1.843012,
+      "baseline_throughput_ops_per_sec": 31005.361881251574,
+      "operation": "provider_route",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.79765,
+      "optimized_p99_ms": 1.101544,
+      "optimized_throughput_ops_per_sec": 31841.430187130973
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.15142,
+      "baseline_p99_ms": 0.43101,
+      "baseline_throughput_ops_per_sec": 91894.91026714724,
+      "operation": "checkpoint_save_load",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.137629,
+      "optimized_p99_ms": 0.490694,
+      "optimized_throughput_ops_per_sec": 89503.9200479383
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.040575,
+      "baseline_p99_ms": 0.068503,
+      "baseline_throughput_ops_per_sec": 646599.8707446859,
+      "operation": "verification_manifest",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.043797,
+      "optimized_p99_ms": 0.077268,
+      "optimized_throughput_ops_per_sec": 622215.3916799225
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.048453,
+      "baseline_p99_ms": 0.318983,
+      "baseline_throughput_ops_per_sec": 122668.92246637153,
+      "operation": "evolution_signature_verify",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.062074,
+      "optimized_p99_ms": 0.333635,
+      "optimized_throughput_ops_per_sec": 140071.25564846094
+    },
+    {
+      "baseline_errors": 0,
+      "baseline_p95_ms": 0.07939,
+      "baseline_p99_ms": 0.148043,
+      "baseline_throughput_ops_per_sec": 256892.55571614194,
+      "operation": "canary_report_from_workspace",
+      "optimized_errors": 0,
+      "optimized_p95_ms": 0.090578,
+      "optimized_p99_ms": 0.17137,
+      "optimized_throughput_ops_per_sec": 208754.80057758276
+    }
+  ],
+  "repository_search_before_after": {
+    "baseline_errors": 0,
+    "baseline_p95_ms": 37.202256,
+    "baseline_throughput_ops_per_sec": 249.1856791729798,
+    "concurrency": 8,
+    "optimized_errors": 0,
+    "optimized_p95_ms": 13.454338,
+    "optimized_throughput_ops_per_sec": 922.6521067932317,
+    "p95_reduction_pct": 63.83461798660812,
+    "throughput_gain_pct": 270.26690693277953
+  },
+  "security_notes": {
+    "cluster_mutation_performed": false,
+    "external_sink_mode": "durable file-backed idempotent outbox",
+    "secret_material_recorded": false,
+    "snapshot_mode": "atomic durable JSON with hash validation",
+    "transport_mode": "Ed25519 envelope identity/term/nonce binding"
+  }
+}

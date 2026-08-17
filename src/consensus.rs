@@ -4,9 +4,13 @@
 //! the typed messages through an approved channel, while this state machine enforces
 //! membership, terms, quorum commit, bounded logs, and deterministic state hashes.
 
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const MAX_MEMBERS: usize = 256;
@@ -14,6 +18,8 @@ const MAX_BATCH_ENTRIES: usize = 256;
 const MAX_KEY_BYTES: usize = 4 * 1024;
 const MAX_VALUE_BYTES: usize = 64 * 1024;
 const MAX_LOG_ENTRIES: usize = 100_000;
+const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_NONCE_BYTES: usize = 128;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -35,6 +41,12 @@ pub enum ConsensusError {
     InvalidMessage(String),
     #[error("consensus serialization failed: {0}")]
     Serialization(String),
+    #[error("invalid consensus snapshot: {0}")]
+    InvalidSnapshot(String),
+    #[error("consensus snapshot persistence failed: {0}")]
+    SnapshotPersistence(String),
+    #[error("consensus message authentication failed: {0}")]
+    Unauthenticated(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +184,170 @@ pub struct ReplicatedSnapshot {
     pub state_hash: String,
 }
 
+impl ReplicatedSnapshot {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.term == 0 || self.last_applied > self.commit_index {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot term must be positive and last_applied cannot exceed commit_index".into(),
+            ));
+        }
+        let expected = digest_json(&self.state)?;
+        if expected != self.state_hash {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot state hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthenticatedConsensusEnvelope {
+    pub sender_id: String,
+    pub term: u64,
+    pub nonce: String,
+    pub message: ConsensusMessage,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+impl AuthenticatedConsensusEnvelope {
+    pub fn sign(
+        sender_id: &str,
+        term: u64,
+        nonce: &str,
+        message: ConsensusMessage,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ConsensusError> {
+        validate_node_id(sender_id)?;
+        validate_nonce(nonce)?;
+        if term == 0 || message_term(&message) != term {
+            return Err(ConsensusError::Unauthenticated(
+                "envelope term must be positive and match the message term".into(),
+            ));
+        }
+        let public_key = signing_key.verifying_key().to_bytes().to_vec();
+        let mut envelope = Self {
+            sender_id: sender_id.to_string(),
+            term,
+            nonce: nonce.to_string(),
+            message,
+            public_key,
+            signature: Vec::new(),
+        };
+        let payload = envelope.payload()?;
+        envelope.signature = signing_key.sign(&payload).to_bytes().to_vec();
+        Ok(envelope)
+    }
+
+    pub fn verify(&self, expected_sender_id: &str, trusted_key: &[u8]) -> Result<(), ConsensusError> {
+        validate_node_id(expected_sender_id)?;
+        validate_node_id(&self.sender_id)?;
+        validate_nonce(&self.nonce)?;
+        if self.sender_id != expected_sender_id || self.term == 0 || message_term(&self.message) != self.term {
+            return Err(ConsensusError::Unauthenticated(
+                "sender identity or term binding mismatch".into(),
+            ));
+        }
+        if trusted_key != self.public_key.as_slice() {
+            return Err(ConsensusError::Unauthenticated(
+                "sender public key is not bound to the trusted identity".into(),
+            ));
+        }
+        let key: [u8; 32] = self
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| ConsensusError::Unauthenticated("public key must be 32 bytes".into()))?;
+        let signature: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| ConsensusError::Unauthenticated("signature must be 64 bytes".into()))?;
+        let verifying_key = VerifyingKey::from_bytes(&key)
+            .map_err(|_| ConsensusError::Unauthenticated("invalid public key".into()))?;
+        verifying_key
+            .verify(&self.payload()?, &Signature::from_bytes(&signature))
+            .map_err(|_| ConsensusError::Unauthenticated("invalid consensus signature".into()))
+    }
+
+    fn payload(&self) -> Result<Vec<u8>, ConsensusError> {
+        serde_json::to_vec(&(
+            &self.sender_id,
+            self.term,
+            &self.nonce,
+            &self.message,
+            &self.public_key,
+        ))
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableSnapshotStore {
+    path: PathBuf,
+}
+
+impl DurableSnapshotStore {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn save(&self, snapshot: &ReplicatedSnapshot) -> Result<(), ConsensusError> {
+        snapshot.validate()?;
+        let bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() as u64 > MAX_SNAPSHOT_BYTES {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot exceeds the 16 MiB bound".into(),
+            ));
+        }
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
+        let temporary = parent.join(format!(
+            ".{}.tmp",
+            self.path.file_name().and_then(|name| name.to_str()).unwrap_or("snapshot")
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
+        let result = file
+            .write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .and_then(|_| fs::rename(&temporary, &self.path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result.map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
+    pub fn load(&self) -> Result<ReplicatedSnapshot, ConsensusError> {
+        let metadata = fs::metadata(&self.path)
+            .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
+        if metadata.len() > MAX_SNAPSHOT_BYTES {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot exceeds the 16 MiB bound".into(),
+            ));
+        }
+        let snapshot: ReplicatedSnapshot = serde_json::from_slice(
+            &fs::read(&self.path)
+                .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConsensusNode {
     id: String,
@@ -258,13 +434,39 @@ impl ConsensusNode {
     }
 
     pub fn snapshot(&self) -> Result<ReplicatedSnapshot, ConsensusError> {
-        Ok(ReplicatedSnapshot {
+        let snapshot = ReplicatedSnapshot {
             term: self.current_term,
             commit_index: self.commit_index,
             last_applied: self.last_applied,
             state: self.state.clone(),
             state_hash: digest_json(&self.state)?,
-        })
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    pub fn install_snapshot(&mut self, snapshot: ReplicatedSnapshot) -> Result<(), ConsensusError> {
+        snapshot.validate()?;
+        if snapshot.term < self.current_term || snapshot.commit_index < self.commit_index {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot is older than the node commit state".into(),
+            ));
+        }
+        if snapshot.last_applied > self.log.len() as u64 && !self.log.is_empty() {
+            return Err(ConsensusError::InvalidSnapshot(
+                "snapshot last_applied exceeds the local log frontier".into(),
+            ));
+        }
+        self.current_term = snapshot.term;
+        self.role = ConsensusRole::Follower;
+        self.voted_for = None;
+        self.votes_received.clear();
+        self.commit_index = snapshot.commit_index;
+        self.last_applied = snapshot.last_applied;
+        self.state = snapshot.state;
+        self.log.clear();
+        self.replication_progress.clear();
+        Ok(())
     }
 
     pub fn start_election(&mut self) -> Result<VoteRequest, ConsensusError> {
@@ -550,6 +752,24 @@ impl ConsensusNode {
             .map(|entry| (entry.index, entry.term))
             .unwrap_or((0, 0))
     }
+}
+
+fn message_term(message: &ConsensusMessage) -> u64 {
+    match message {
+        ConsensusMessage::VoteRequest(value) => value.term,
+        ConsensusMessage::VoteResponse(value) => value.term,
+        ConsensusMessage::AppendEntries(value) => value.term,
+        ConsensusMessage::AppendResponse(value) => value.term,
+    }
+}
+
+fn validate_nonce(nonce: &str) -> Result<(), ConsensusError> {
+    if nonce.trim().is_empty() || nonce.len() > MAX_NONCE_BYTES || nonce.chars().any(char::is_control) {
+        return Err(ConsensusError::Unauthenticated(
+            "consensus nonce must be bounded and contain no control characters".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_node_id(id: &str) -> Result<(), ConsensusError> {

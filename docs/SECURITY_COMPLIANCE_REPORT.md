@@ -1,7 +1,7 @@
 # Security Compliance Report
 
 **Project:** un1c0 local-first AI-programmable agent runtime
-**Scope:** bounded consensus/state replication, zero-trust mesh authorization, cryptographic audit logging, Helm fail-closed rendering, and isolated mTLS validation
+**Scope:** bounded consensus/state replication, zero-trust mesh authorization, cryptographic audit logging, durable snapshots, authenticated consensus transport, signer lifecycle, Helm fail-closed rendering, and isolated mTLS validation
 **Author:** Manus AI
 
 ## Executive assessment
@@ -16,7 +16,9 @@ The repository’s Raft-style core remains intentionally bounded and determinist
 |---|---|---|---|
 | Consensus membership | Bounded member IDs and unknown-member rejection | [`src/consensus.rs`](../src/consensus.rs) | Implemented |
 | Quorum commit | `floor(n/2)+1` quorum; leader applies only current-term acknowledged entries | [`src/consensus.rs`](../src/consensus.rs) | Implemented |
-| Snapshot integrity | Snapshot includes term, commit index, last-applied index, state, and SHA-256 state hash | [`src/consensus.rs`](../src/consensus.rs) | Implemented in-memory |
+| Snapshot integrity | Snapshot includes term, commit index, last-applied index, state, and SHA-256 state hash | [`src/consensus.rs`](../src/consensus.rs) | Implemented |
+| Snapshot durability | Unique temporary file, write/fsync, atomic rename, hash validation, stale-snapshot rejection, and install path | [`src/consensus.rs`](../src/consensus.rs) | Implemented; backup/restore operations remain deployment gates |
+| Consensus transport identity | Ed25519 envelope binds sender ID, term, bounded nonce, message, and trusted public key | [`src/consensus.rs`](../src/consensus.rs) | Implemented; replay window remains deployment gate |
 | Mesh identity | Trust-domain, namespace, service-account, SPIFFE-style identity validation | [`src/security.rs`](../src/security.rs) | Implemented |
 | Mesh authorization | Audience, certificate fingerprint, peer relation, and method allowlist checks | [`src/security.rs`](../src/security.rs) | Implemented |
 | In-cluster mTLS | Istio `PeerAuthentication` with `STRICT` mode when explicitly enabled | [`deploy/helm/un1c0/templates/mesh.yaml`](../deploy/helm/un1c0/templates/mesh.yaml) | Implemented as optional chart resources |
@@ -24,6 +26,8 @@ The repository’s Raft-style core remains intentionally bounded and determinist
 | Audit authenticity | Ed25519 signature over canonical record payload and trusted signer binding | [`src/security.rs`](../src/security.rs) | Implemented |
 | Audit tamper evidence | Contiguous sequence, previous hash, current hash, signature, and public-key verification | [`src/security.rs`](../src/security.rs) | Implemented |
 | Audit privacy | Metadata is stored as a bounded SHA-256 digest; raw request payloads are not persisted | [`src/security.rs`](../src/security.rs) | Implemented |
+| Signer lifecycle | Atomic registry persistence, one-way rotation, revocation, historical verification, and active-signer enforcement | [`src/security.rs`](../src/security.rs) | Implemented |
+| External audit sink | Immutable content-addressed records, create-new writes, fsync, idempotent retries, chain verification, and flush recovery | [`src/security.rs`](../src/security.rs) | Implemented locally; remote sink remains deployment gate |
 | Helm fail-closed | Untouched staging values fail; mutable tags, missing digests/CIDRs, and missing mesh inputs are rejected | [`scripts/validate_helm_security.sh`](../scripts/validate_helm_security.sh) | Passed |
 | Edge mTLS | Disposable CA/server/client certificates, `ssl_verify_client on`, health and Prometheus checks | [`scripts/validate_compose_smoke.sh`](../scripts/validate_compose_smoke.sh), [`vault/nginx/mutual_tls.conf`](../vault/nginx/mutual_tls.conf) | Passed |
 
@@ -50,9 +54,13 @@ The updated Helm gate additionally verifies strict Istio mTLS, both Authorizatio
 
 ## Residual risks and required promotion gates
 
-The local audit file is a signed hash chain, not a distributed audit-consensus protocol. Production requires an approved durable sink, a signer rotation/revocation process, retention and deletion policy, clock-skew policy, cross-node ordering semantics, and alerting for chain verification failures. The mesh chart emits Istio resources but does not prove that an Istio control plane or admission webhook is installed; a staging server-side dry run and authenticated rollout remain required.
+The local audit file remains the authoritative outbox and is not itself a remote distributed audit service. Phase 10 adds durable sink segments, idempotent retry, registry rotation/revocation, and local recovery. Production still requires a remote append-only sink, retention/deletion policy, clock-skew policy, cross-node ordering semantics, signer distribution, and alerting for chain verification failures. The mesh chart emits Istio resources but does not prove that an Istio control plane or admission webhook is installed; a staging server-side dry run and authenticated rollout remain required.
 
-The consensus snapshot remains in-memory and does not compact or persist the log. Before production promotion, add durable snapshot files with atomic replacement, snapshot-install messages, membership configuration binding, replay/recovery tests, and a transport authentication test that binds message identity to the zero-trust mesh policy.
+Phase 10 adds durable JSON snapshots and install checks, but the consensus log is not yet compacted around an installable membership/configuration record. The authenticated envelope binds identity, term, nonce, and message signature; a production transport still needs a replay window, cluster/configuration ID, key rotation distribution, and connection-level authorization bound to mesh identity.
+
+## Metrics report
+
+The generated [`benchmarks/security_compliance_metrics.json`](../benchmarks/security_compliance_metrics.json) records all ten local gates as passed, no secret material or cluster mutation, and exact concurrency-eight benchmark evidence. Repository search improved from **37.202256 ms p95 / 249.185679 ops/s** to **13.454338 ms p95 / 922.652107 ops/s**, a **63.8346% p95 reduction** and **270.2669% throughput gain**, with zero errors in both runs. The metrics report was generated by [`scripts/collect_security_compliance_metrics.py`](../scripts/collect_security_compliance_metrics.py) and the complete gate is reproducible through [`scripts/validate_security_compliance.sh`](../scripts/validate_security_compliance.sh).
 
 ## References
 

@@ -34,6 +34,10 @@ pub enum SecurityError {
     AccessDenied(String),
     #[error("audit signer is not trusted: {0}")]
     UntrustedSigner(String),
+    #[error("audit signer is revoked: {0}")]
+    SignerRevoked(String),
+    #[error("durable audit sink persistence failed: {0}")]
+    SinkPersistence(String),
     #[error("audit signature verification failed")]
     InvalidSignature,
     #[error("audit chain verification failed: {0}")]
@@ -259,9 +263,15 @@ impl ZeroTrustMesh {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditSignerState {
+    pub public_key: [u8; 32],
+    pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuditSignerStore {
-    keys: BTreeMap<String, [u8; 32]>,
+    keys: BTreeMap<String, AuditSignerState>,
 }
 
 impl AuditSignerStore {
@@ -273,30 +283,144 @@ impl AuditSignerStore {
         validate_identifier(signer_id, "audit signer id")?;
         let key: [u8; 32] = public_key.try_into().map_err(|_| SecurityError::InvalidSignature)?;
         if let Some(existing) = self.keys.get(signer_id) {
-            if existing != &key {
+            if existing.public_key != key {
                 return Err(SecurityError::UntrustedSigner(format!(
                     "signer '{}' cannot be rebound",
                     signer_id
                 )));
             }
+            if existing.revoked {
+                return Err(SecurityError::SignerRevoked(signer_id.to_string()));
+            }
         } else {
-            self.keys.insert(signer_id.to_string(), key);
+            self.keys.insert(
+                signer_id.to_string(),
+                AuditSignerState {
+                    public_key: key,
+                    revoked: false,
+                },
+            );
         }
         Ok(())
     }
 
-    fn authorize(&self, signer_id: &str, public_key: &[u8]) -> Result<(), SecurityError> {
+    pub fn revoke(&mut self, signer_id: &str) -> Result<(), SecurityError> {
+        validate_identifier(signer_id, "audit signer id")?;
+        let signer = self
+            .keys
+            .get_mut(signer_id)
+            .ok_or_else(|| SecurityError::UntrustedSigner(signer_id.to_string()))?;
+        signer.revoked = true;
+        Ok(())
+    }
+
+    pub fn rotate(
+        &mut self,
+        old_signer_id: &str,
+        new_signer_id: &str,
+        new_public_key: &[u8],
+    ) -> Result<(), SecurityError> {
+        validate_identifier(old_signer_id, "old audit signer id")?;
+        validate_identifier(new_signer_id, "new audit signer id")?;
+        if old_signer_id == new_signer_id {
+            return Err(SecurityError::UntrustedSigner(
+                "signer rotation requires distinct signer IDs".into(),
+            ));
+        }
+        let new_key: [u8; 32] = new_public_key
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
+        let old = self
+            .keys
+            .get(old_signer_id)
+            .ok_or_else(|| SecurityError::UntrustedSigner(old_signer_id.to_string()))?;
+        if old.revoked {
+            return Err(SecurityError::SignerRevoked(old_signer_id.to_string()));
+        }
+        if self.keys.contains_key(new_signer_id) {
+            return Err(SecurityError::UntrustedSigner(format!(
+                "signer '{}' already exists",
+                new_signer_id
+            )));
+        }
+        self.keys
+            .get_mut(old_signer_id)
+            .expect("checked above")
+            .revoked = true;
+        self.keys.insert(
+            new_signer_id.to_string(),
+            AuditSignerState {
+                public_key: new_key,
+                revoked: false,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn is_revoked(&self, signer_id: &str) -> bool {
+        self.keys.get(signer_id).is_some_and(|signer| signer.revoked)
+    }
+
+    fn authorize_historical(&self, signer_id: &str, public_key: &[u8]) -> Result<(), SecurityError> {
         let trusted = self
             .keys
             .get(signer_id)
             .ok_or_else(|| SecurityError::UntrustedSigner(signer_id.to_string()))?;
-        if trusted.as_slice() != public_key {
+        if trusted.public_key.as_slice() != public_key {
             return Err(SecurityError::UntrustedSigner(format!(
                 "public key mismatch for '{}'",
                 signer_id
             )));
         }
         Ok(())
+    }
+
+    fn authorize_active(&self, signer_id: &str, public_key: &[u8]) -> Result<(), SecurityError> {
+        self.authorize_historical(signer_id, public_key)?;
+        if self.is_revoked(signer_id) {
+            return Err(SecurityError::SignerRevoked(signer_id.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn save_atomic(&self, path: impl AsRef<Path>) -> Result<(), SecurityError> {
+        let path = path.as_ref();
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+        let temporary = parent.join(format!(".{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("signers")));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        let result = file
+            .write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .and_then(|_| fs::rename(&temporary, path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result.map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, SecurityError> {
+        let bytes = fs::read(path).map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        let store: Self = serde_json::from_slice(&bytes)
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+        for (signer_id, signer) in &store.keys {
+            validate_identifier(signer_id, "audit signer id")?;
+            if signer.public_key.len() != 32 {
+                return Err(SecurityError::InvalidSignature);
+            }
+        }
+        Ok(store)
     }
 }
 
@@ -347,7 +471,7 @@ impl AuditRecord {
                 "audit record contains a malformed digest".into(),
             ));
         }
-        trusted.authorize(&self.signer_id, &self.public_key)?;
+        trusted.authorize_historical(&self.signer_id, &self.public_key)?;
         let payload = self.signing_payload()?;
         let expected_hash = hex_digest(&payload);
         if expected_hash != self.record_hash {
@@ -381,12 +505,102 @@ struct AuditState {
     previous_hash: String,
 }
 
+pub trait AuditSink: Send + Sync {
+    fn persist(&self, record: &AuditRecord) -> Result<(), SecurityError>;
+}
+
+#[derive(Clone)]
+pub struct DurableFileAuditSink {
+    directory: PathBuf,
+}
+
+impl DurableFileAuditSink {
+    pub fn open(directory: impl AsRef<Path>) -> Result<Self, SecurityError> {
+        let directory = directory.as_ref().to_path_buf();
+        fs::create_dir_all(&directory)
+            .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+        Ok(Self { directory })
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn verify_chain(&self, trusted: &AuditSignerStore) -> Result<usize, SecurityError> {
+        let mut records = Vec::new();
+        for entry in fs::read_dir(&self.directory)
+            .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?
+        {
+            let entry = entry.map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+            if entry.file_type().map_err(|error| SecurityError::SinkPersistence(error.to_string()))?.is_file() {
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                    continue;
+                }
+                let record: AuditRecord = serde_json::from_slice(
+                    &fs::read(&path).map_err(|error| SecurityError::SinkPersistence(error.to_string()))?,
+                )
+                .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+                records.push(record);
+            }
+        }
+        records.sort_by_key(|record| record.sequence);
+        let mut previous_hash = String::new();
+        for (expected_sequence, record) in records.iter().enumerate() {
+            let expected_sequence = expected_sequence as u64 + 1;
+            if record.sequence != expected_sequence || record.previous_hash != previous_hash {
+                return Err(SecurityError::ChainInvalid(
+                    "external audit sink sequence or previous hash mismatch".into(),
+                ));
+            }
+            record.verify(trusted)?;
+            previous_hash = record.record_hash.clone();
+        }
+        Ok(records.len())
+    }
+}
+
+impl AuditSink for DurableFileAuditSink {
+    fn persist(&self, record: &AuditRecord) -> Result<(), SecurityError> {
+        let filename = format!("{:020}-{}.json", record.sequence, record.record_hash);
+        let path = self.directory.join(filename);
+        let bytes = serde_json::to_vec(record)
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .and_then(|_| file.sync_all())
+                    .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+                if let Some(parent) = self.directory.parent() {
+                    if let Ok(directory_file) = OpenOptions::new().read(true).open(parent) {
+                        let _ = directory_file.sync_all();
+                    }
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = fs::read(&path)
+                    .map_err(|read_error| SecurityError::SinkPersistence(read_error.to_string()))?;
+                if existing == bytes {
+                    Ok(())
+                } else {
+                    Err(SecurityError::SinkPersistence(
+                        "external audit sink record collision".into(),
+                    ))
+                }
+            }
+            Err(error) => Err(SecurityError::SinkPersistence(error.to_string())),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AuditLog {
     path: PathBuf,
-    signer_id: String,
-    signing_key: Arc<SigningKey>,
-    trusted_signers: AuditSignerStore,
+    signer_id: Arc<Mutex<String>>,
+    signing_key: Arc<Mutex<SigningKey>>,
+    trusted_signers: Arc<Mutex<AuditSignerStore>>,
+    sink: Option<Arc<dyn AuditSink>>,
     state: Arc<Mutex<AuditState>>,
 }
 
@@ -397,10 +611,20 @@ impl AuditLog {
         signing_key: SigningKey,
         trusted_signers: AuditSignerStore,
     ) -> Result<Self, SecurityError> {
+        Self::open_with_signer_and_sink(path, signer_id, signing_key, trusted_signers, None)
+    }
+
+    pub fn open_with_signer_and_sink(
+        path: impl AsRef<Path>,
+        signer_id: &str,
+        signing_key: SigningKey,
+        trusted_signers: AuditSignerStore,
+        sink: Option<Arc<dyn AuditSink>>,
+    ) -> Result<Self, SecurityError> {
         validate_identifier(signer_id, "audit signer id")?;
         let path = path.as_ref().to_path_buf();
         let public_key = signing_key.verifying_key().to_bytes();
-        trusted_signers.authorize(signer_id, &public_key)?;
+        trusted_signers.authorize_active(signer_id, &public_key)?;
         let mut next_sequence = 1u64;
         let mut previous_hash = String::new();
         if path.exists() {
@@ -443,9 +667,10 @@ impl AuditLog {
         }
         Ok(Self {
             path,
-            signer_id: signer_id.to_string(),
-            signing_key: Arc::new(signing_key),
-            trusted_signers,
+            signer_id: Arc::new(Mutex::new(signer_id.to_string())),
+            signing_key: Arc::new(Mutex::new(signing_key)),
+            trusted_signers: Arc::new(Mutex::new(trusted_signers)),
+            sink,
             state: Arc::new(Mutex::new(AuditState {
                 next_sequence,
                 previous_hash,
@@ -479,7 +704,21 @@ impl AuditLog {
             .state
             .lock()
             .map_err(|_| SecurityError::Persistence("audit state lock poisoned".into()))?;
-        let public_key = self.signing_key.verifying_key().to_bytes().to_vec();
+        let signer_id = self
+            .signer_id
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer lock poisoned".into()))?
+            .clone();
+        let signing_key = self
+            .signing_key
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signing-key lock poisoned".into()))?;
+        let trusted_signers = self
+            .trusted_signers
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer-store lock poisoned".into()))?;
+        let public_key = signing_key.verifying_key().to_bytes().to_vec();
+        trusted_signers.authorize_active(&signer_id, &public_key)?;
         let mut record = AuditRecord {
             sequence: state.next_sequence,
             timestamp_ms: now_ms(),
@@ -490,14 +729,14 @@ impl AuditLog {
             metadata_sha256,
             previous_hash: state.previous_hash.clone(),
             record_hash: String::new(),
-            signer_id: self.signer_id.clone(),
+            signer_id,
             public_key,
             signature: Vec::new(),
         };
         let payload = record.signing_payload()?;
         record.record_hash = hex_digest(&payload);
-        record.signature = self.signing_key.sign(&payload).to_bytes().to_vec();
-        record.verify(&self.trusted_signers)?;
+        record.signature = signing_key.sign(&payload).to_bytes().to_vec();
+        record.verify(&trusted_signers)?;
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| SecurityError::Persistence(error.to_string()))?;
@@ -524,7 +763,102 @@ impl AuditLog {
             .next_sequence
             .checked_add(1)
             .ok_or_else(|| SecurityError::ChainInvalid("sequence overflow".into()))?;
+        drop(trusted_signers);
+        drop(signing_key);
+        if let Some(sink) = &self.sink {
+            sink.persist(&record)?;
+        }
         Ok(record)
+    }
+
+    pub fn rotate_signer(
+        &self,
+        new_signer_id: &str,
+        new_signing_key: SigningKey,
+        registry_path: impl AsRef<Path>,
+    ) -> Result<(), SecurityError> {
+        let _state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit state lock poisoned".into()))?;
+        let mut signer_id = self
+            .signer_id
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer lock poisoned".into()))?;
+        let mut signing_key = self
+            .signing_key
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signing-key lock poisoned".into()))?;
+        let mut trusted = self
+            .trusted_signers
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer-store lock poisoned".into()))?;
+        let original = trusted.clone();
+        trusted.rotate(
+            &signer_id,
+            new_signer_id,
+            &new_signing_key.verifying_key().to_bytes(),
+        )?;
+        if let Err(error) = trusted.save_atomic(registry_path) {
+            *trusted = original;
+            return Err(error);
+        }
+        *signer_id = new_signer_id.to_string();
+        *signing_key = new_signing_key;
+        Ok(())
+    }
+
+    pub fn revoke_signer(
+        &self,
+        signer_id: &str,
+        registry_path: impl AsRef<Path>,
+    ) -> Result<(), SecurityError> {
+        let _state = self
+            .state
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit state lock poisoned".into()))?;
+        let mut trusted = self
+            .trusted_signers
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer-store lock poisoned".into()))?;
+        let original = trusted.clone();
+        trusted.revoke(signer_id)?;
+        if let Err(error) = trusted.save_atomic(registry_path) {
+            *trusted = original;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn signer_store(&self) -> Result<AuditSignerStore, SecurityError> {
+        self.trusted_signers
+            .lock()
+            .map(|store| store.clone())
+            .map_err(|_| SecurityError::Persistence("audit signer-store lock poisoned".into()))
+    }
+
+    pub fn flush_sink(&self) -> Result<usize, SecurityError> {
+        let sink = self
+            .sink
+            .as_ref()
+            .ok_or_else(|| SecurityError::SinkPersistence("no external sink configured".into()))?
+            .clone();
+        let trusted = self
+            .trusted_signers
+            .lock()
+            .map_err(|_| SecurityError::Persistence("audit signer-store lock poisoned".into()))?;
+        let file = fs::File::open(&self.path)
+            .map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        let mut count = 0;
+        for line in BufReader::new(file).lines() {
+            let line = line.map_err(|error| SecurityError::Persistence(error.to_string()))?;
+            let record: AuditRecord = serde_json::from_str(&line)
+                .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+            record.verify(&trusted)?;
+            sink.persist(&record)?;
+            count += 1;
+        }
+        Ok(count)
     }
 }
 
