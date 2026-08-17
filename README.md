@@ -215,3 +215,9 @@ The initial runtime intentionally does **not** execute arbitrary shell commands,
 
 - [Phase 2 provider routing](PHASE2_PROVIDER_ROUTING.md) — structured-output adapters, typed failure taxonomy, routing, retries, cooldowns, and fallback policy.
 - [Phase 4 verification loop](PHASE4_VERIFICATION_LOOP.md) — trusted verifier manifests, sandbox boundaries, compiler/test evidence, repair tasks, and rollback rules.
+
+### Batch agent platform additions
+
+- [Repository intelligence](src/repository.rs) — deterministic file and symbol indexing with bounded ranked context retrieval.
+- [Resumable execution](src/run_state.rs) — atomic plan-hashed checkpoints that skip completed actions and clear after successful completion.
+- [Bounded subagents](src/subagent.rs) — isolated workspaces, bounded parallel scheduling, verification evidence, and conflict-aware merge gates.

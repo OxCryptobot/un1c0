@@ -5,6 +5,7 @@
 //! append-only JSONL events. This module intentionally contains no network or
 //! arbitrary-shell capability; those must be added behind explicit adapters.
 
+use crate::run_state::{CheckpointStore, RunCheckpoint};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -579,17 +580,11 @@ pub struct RunReport {
     pub results: Vec<ActionResult>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub approved_actions: BTreeSet<String>,
-}
-
-impl Default for RunOptions {
-    fn default() -> Self {
-        Self {
-            approved_actions: BTreeSet::new(),
-        }
-    }
+    pub checkpoint_store: Option<CheckpointStore>,
+    pub resume: Option<RunCheckpoint>,
 }
 
 pub struct Runtime {
@@ -623,7 +618,24 @@ impl Runtime {
 
     pub fn run(&self, plan: &Plan, options: &RunOptions) -> Result<RunReport, AgentError> {
         plan.validate(&self.registry)?;
-        let run_id = stable_id(&format!("{}:{}:{}", plan.id, plan.goal, now_ms()));
+        if let Some(resume) = &options.resume {
+            resume.validate_for(plan).map_err(AgentError::from)?;
+        }
+        if let Some(store) = &options.checkpoint_store {
+            if let Some(stored) = store.load().map_err(AgentError::from)? {
+                stored.validate_for(plan).map_err(AgentError::from)?;
+            }
+        }
+        let resume = options.resume.clone().or_else(|| {
+            options
+                .checkpoint_store
+                .as_ref()
+                .and_then(|store| store.load().ok().flatten())
+        });
+        let run_id = resume
+            .as_ref()
+            .map(|checkpoint| checkpoint.run_id.clone())
+            .unwrap_or_else(|| stable_id(&format!("{}:{}:{}", plan.id, plan.goal, now_ms())));
         self.emit(
             &run_id,
             "run_started",
@@ -639,6 +651,14 @@ impl Runtime {
             .collect();
         let mut statuses: HashMap<String, ActionStatus> = HashMap::new();
         let mut results = Vec::new();
+        if let Some(checkpoint) = &resume {
+            for result in &checkpoint.completed {
+                if result.status == ActionStatus::Succeeded {
+                    statuses.insert(result.action_id.clone(), ActionStatus::Succeeded);
+                    results.push(result.clone());
+                }
+            }
+        }
         let step_limit = plan.max_steps.min(order.len());
         if order.len() > step_limit {
             return Err(AgentError::BudgetExceeded(format!(
@@ -666,6 +686,10 @@ impl Runtime {
                 self.emit(&run_id, "action_skipped", Some(&action.id), json!(&result))?;
                 statuses.insert(action.id.clone(), ActionStatus::Skipped);
                 results.push(result);
+                continue;
+            }
+
+            if statuses.get(&action.id) == Some(&ActionStatus::Succeeded) {
                 continue;
             }
 
@@ -734,7 +758,25 @@ impl Runtime {
             };
             self.emit(&run_id, event_kind, Some(&action.id), json!(&result))?;
             statuses.insert(action.id.clone(), result.status.clone());
-            results.push(result);
+            results.push(result.clone());
+            if result.status == ActionStatus::Succeeded {
+                if let Some(store) = &options.checkpoint_store {
+                    let completed = results
+                        .iter()
+                        .filter(|item| item.status == ActionStatus::Succeeded)
+                        .cloned()
+                        .collect();
+                    store
+                        .save(&RunCheckpoint::new(plan, &run_id, completed))
+                        .map_err(AgentError::from)?;
+                    self.emit(
+                        &run_id,
+                        "checkpoint_saved",
+                        Some(&action.id),
+                        json!({ "path": store.path() }),
+                    )?;
+                }
+            }
         }
 
         let status = if results
@@ -751,6 +793,11 @@ impl Runtime {
             ActionStatus::Blocked
         };
         self.emit(&run_id, "run_finished", None, json!({ "status": status }))?;
+        if status == ActionStatus::Succeeded {
+            if let Some(store) = &options.checkpoint_store {
+                store.clear().map_err(AgentError::from)?;
+            }
+        }
         Ok(RunReport {
             run_id,
             plan_id: plan.id.clone(),
@@ -1292,6 +1339,61 @@ mod tests {
     }
 
     #[test]
+    fn resumes_from_checkpoint_and_clears_after_success() {
+        let dir = tempdir().unwrap();
+        let plan = plan(vec![
+            Action {
+                id: "first".into(),
+                tool: "echo".into(),
+                input: json!({"message":"first"}),
+                depends_on: vec![],
+                capabilities: vec![],
+                timeout_ms: None,
+            },
+            Action {
+                id: "second".into(),
+                tool: "echo".into(),
+                input: json!({"message":"second"}),
+                depends_on: vec!["first".into()],
+                capabilities: vec![],
+                timeout_ms: None,
+            },
+        ]);
+        let store = CheckpointStore::new(dir.path().join("checkpoint.json"));
+        store
+            .save(&RunCheckpoint::new(
+                &plan,
+                "resumed-run",
+                vec![ActionResult {
+                    action_id: "first".into(),
+                    status: ActionStatus::Succeeded,
+                    output: json!({"message":"first"}),
+                    error: None,
+                }],
+            ))
+            .unwrap();
+        let runtime = Runtime::new(
+            Workspace::new(dir.path()).unwrap(),
+            built_in_registry(),
+            Policy::restricted(),
+            EventJournal::new(dir.path().join("events.jsonl")),
+        );
+        let report = runtime
+            .run(
+                &plan,
+                &RunOptions {
+                    checkpoint_store: Some(store.clone()),
+                    ..RunOptions::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(report.run_id, "resumed-run");
+        assert_eq!(report.status, ActionStatus::Succeeded);
+        assert_eq!(report.results.len(), 2);
+        assert!(store.load().unwrap().is_none());
+    }
+
+    #[test]
     fn write_requires_approval_and_is_atomic_when_approved() {
         let dir = tempdir().unwrap();
         let runtime = Runtime::new(
@@ -1317,6 +1419,7 @@ mod tests {
                 &plan,
                 &RunOptions {
                     approved_actions: ["write".into()].into_iter().collect(),
+                    ..RunOptions::default()
                 },
             )
             .unwrap();

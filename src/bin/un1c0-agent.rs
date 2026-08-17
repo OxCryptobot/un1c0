@@ -77,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let options = RunOptions {
                 approved_actions: approve.into_iter().collect::<BTreeSet<_>>(),
+                ..RunOptions::default()
             };
             let report = runtime.run(&plan, &options)?;
             println!("{}", serde_json::to_string_pretty(&report)?);

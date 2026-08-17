@@ -83,3 +83,7 @@ The kernel does not embed a particular model provider. A future provider adapter
 ## Non-goals of the first implementation
 
 The first kernel does not claim to provide unrestricted self-learning, autonomous code modification, or safe execution of arbitrary shell commands. Those capabilities require stronger sandboxing, identity, resource isolation, provenance, and evaluation infrastructure. The kernel instead establishes the contracts that make later autonomy safe and measurable.
+
+## Batch implementation extensions
+
+The kernel now includes three additional production seams. `RepositoryIndex` performs deterministic, bounded local indexing of supported source and documentation files, extracts lightweight symbols, hashes files, skips ignored directories and symlinks, and converts ranked matches into bounded provider context items. `CheckpointStore` persists plan-hashed successful action results atomically; `Runtime` can resume from a matching checkpoint, skip completed actions, journal checkpoint saves, and clear the checkpoint only after successful completion. `SubagentCoordinator` schedules isolated workspaces with a bounded parallelism limit, while `MergeGate` requires successful verification and rejects overlapping changed files before integration.

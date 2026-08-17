@@ -8,9 +8,9 @@ use crate::agentic::{Capability, Plan, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -248,6 +248,7 @@ impl ProviderRouter {
             )));
         }
 
+        let deadline = Instant::now() + Duration::from_millis(request.deadline_ms.max(1));
         let mut attempts = Vec::new();
         for provider in candidates {
             let provider_id = provider.manifest().provider_id.clone();
@@ -258,11 +259,33 @@ impl ProviderRouter {
                 }
                 if attempt > 0 {
                     let backoff = self.backoff(attempt);
-                    if backoff > 0 {
-                        thread::sleep(Duration::from_millis(backoff));
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        attempts.push(RouteAttempt {
+                            provider_id: provider_id.clone(),
+                            model_id: model_id.clone(),
+                            attempt,
+                            outcome: "request deadline exceeded".into(),
+                            latency_ms: None,
+                        });
+                        break;
                     }
+                    thread::sleep(Duration::from_millis(
+                        backoff.min(remaining.as_millis() as u64),
+                    ));
                 }
-                match provider.complete(request) {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    attempts.push(RouteAttempt {
+                        provider_id: provider_id.clone(),
+                        model_id: model_id.clone(),
+                        attempt,
+                        outcome: "request deadline exceeded".into(),
+                        latency_ms: None,
+                    });
+                    break;
+                }
+                match call_provider_with_timeout(Arc::clone(provider), request.clone(), remaining) {
                     Ok(response) => {
                         self.record_success(&provider_id);
                         attempts.push(RouteAttempt {
@@ -388,6 +411,21 @@ pub fn decode_plan(
     Ok(plan)
 }
 
+fn call_provider_with_timeout(
+    provider: Arc<dyn ModelProvider>,
+    request: ProviderRequest,
+    timeout: Duration,
+) -> Result<ProviderResponse, ProviderError> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = provider.complete(&request);
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(timeout)
+        .unwrap_or(Err(ProviderError::Timeout))
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -437,6 +475,22 @@ mod tests {
         }
         fn complete(&self, _request: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
             self.responses.lock().unwrap().remove(0)
+        }
+    }
+
+    struct SlowProvider {
+        manifest: ProviderManifest,
+    }
+
+    impl ModelProvider for SlowProvider {
+        fn manifest(&self) -> &ProviderManifest {
+            &self.manifest
+        }
+        fn complete(&self, _request: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+            thread::sleep(Duration::from_millis(50));
+            Err(ProviderError::Transport {
+                message: "late response".into(),
+            })
         }
     }
 
@@ -521,6 +575,27 @@ mod tests {
         let outcome = router.complete(&request()).unwrap();
         assert_eq!(outcome.attempts.last().unwrap().provider_id, "backup");
         assert_eq!(outcome.attempts.len(), 3);
+    }
+
+    #[test]
+    fn enforces_request_deadline_for_slow_provider() {
+        let provider = Arc::new(SlowProvider {
+            manifest: MockProvider::new("slow", 95, vec![Ok(valid_response())]).manifest,
+        });
+        let router = ProviderRouter::new(
+            vec![provider],
+            RouterConfig {
+                max_retries_per_provider: 0,
+                backoff_initial_ms: 0,
+                ..RouterConfig::default()
+            },
+        );
+        let mut request = request();
+        request.deadline_ms = 5;
+        let error = router.complete(&request).unwrap_err();
+        assert!(
+            matches!(error, RoutingError::AllAttemptsFailed(message) if message.contains("timed out"))
+        );
     }
 
     #[test]
