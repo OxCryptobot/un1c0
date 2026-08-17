@@ -70,7 +70,7 @@ services:
       - /var/log/nginx:rw,noexec,nosuid,size=8m
     volumes:
       - ./nginx/mutual_tls.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/nginx/certs:ro
+      - ${CERTS_DIR:-./certs}:/etc/nginx/certs:ro
     ports:
       - "${NGINX_PORT:-8443}:8443"
     depends_on:

@@ -39,16 +39,20 @@ fi
 eval "$(./scripts/allocate_ci_ports.sh)"
 export VAULT_PORT ADMIN_PORT NGINX_PORT COMPOSE_PROJECT_NAME
 export VAULT_ADDR=http://vault:8200
+CERTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/un1c0-smoke-certs.XXXXXX")"
+export CERTS_DIR
 compose+=( -p "$COMPOSE_PROJECT_NAME" -f vault/docker-compose.yml )
 
 cleanup() {
   set +e
   "${compose[@]}" down --volumes --remove-orphans >/tmp/un1c0-compose-smoke-cleanup.log 2>&1
+  rm -rf "$CERTS_DIR"
 }
 trap cleanup EXIT INT TERM
 
+CERTS_DIR="$CERTS_DIR" ./vault/generate_certs.sh >/tmp/un1c0-compose-smoke-certs.log 2>&1
 "${compose[@]}" config >/tmp/un1c0-compose-smoke-config.yml
-VAULT_PORT="$VAULT_PORT" ADMIN_PORT="$ADMIN_PORT" NGINX_PORT="$NGINX_PORT" "${compose[@]}" up --build -d
+VAULT_PORT="$VAULT_PORT" ADMIN_PORT="$ADMIN_PORT" NGINX_PORT="$NGINX_PORT" CERTS_DIR="$CERTS_DIR" "${compose[@]}" up --build -d
 
 wait_http() {
   local url="$1"
@@ -64,11 +68,26 @@ wait_http "http://127.0.0.1:${VAULT_PORT}/v1/sys/health"
 wait_http "http://127.0.0.1:${ADMIN_PORT}/health"
 wait_http "http://127.0.0.1:${ADMIN_PORT}/ready"
 
+wait_mtls() {
+  local url="$1"
+  for _ in $(seq 1 60); do
+    if curl --silent --show-error --fail --max-time 3 \
+      -k --cert "$CERTS_DIR/client.crt" --key "$CERTS_DIR/client.key" "$url" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Timed out waiting for mTLS endpoint $url" >&2
+  return 1
+}
+
+wait_mtls "https://127.0.0.1:${NGINX_PORT}/health"
+
 curl --silent --show-error --fail --max-time 10 \
-  -k --cert vault/certs/client.crt --key vault/certs/client.key \
+  -k --cert "$CERTS_DIR/client.crt" --key "$CERTS_DIR/client.key" \
   "https://127.0.0.1:${NGINX_PORT}/health" >/tmp/un1c0-compose-smoke-health.json
 curl --silent --show-error --fail --max-time 10 \
-  -k --cert vault/certs/client.crt --key vault/certs/client.key \
+  -k --cert "$CERTS_DIR/client.crt" --key "$CERTS_DIR/client.key" \
   "https://127.0.0.1:${NGINX_PORT}/metrics/prometheus" >/tmp/un1c0-compose-smoke-metrics.txt
 
 grep -q '^un1c0_admin_status 1$' /tmp/un1c0-compose-smoke-metrics.txt

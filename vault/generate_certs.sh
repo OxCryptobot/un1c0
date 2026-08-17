@@ -2,8 +2,11 @@
 set -euo pipefail
 
 # Generate a CA, server certificate, and client certificate for local mTLS testing.
-mkdir -p vault/certs
-cd vault/certs
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CERTS_DIR=${CERTS_DIR:-"$ROOT_DIR/vault/certs"}
+umask 077
+mkdir -p "$CERTS_DIR"
+cd "$CERTS_DIR"
 
 echo "Generating CA key and cert"
 openssl genrsa -out ca.key 4096
@@ -41,4 +44,4 @@ EOF
 
 openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365 -sha256 -extfile v3-client.ext
 
-echo "Generated files in vault/certs: ca.crt ca.key server.crt server.key client.crt client.key"
+echo "Generated files in ${CERTS_DIR}: ca.crt ca.key server.crt server.key client.crt client.key"

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -50,6 +50,96 @@ pub enum ProposalState {
         reason: String,
         completed_at_ms: u128,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluationCheck {
+    pub name: String,
+    pub passed: bool,
+    pub exit_code: Option<i32>,
+    pub stdout_digest: String,
+    pub stderr_digest: String,
+    pub duration_ms: u64,
+}
+
+impl EvaluationCheck {
+    pub fn from_output(
+        name: &str,
+        passed: bool,
+        exit_code: Option<i32>,
+        stdout: &str,
+        stderr: &str,
+        duration_ms: u64,
+    ) -> Result<Self, EvolutionError> {
+        if name.trim().is_empty() || name.len() > 256 {
+            return Err(EvolutionError::InvalidProposal(
+                "evaluation check name must be between 1 and 256 bytes".into(),
+            ));
+        }
+        Ok(Self {
+            name: name.to_string(),
+            passed,
+            exit_code,
+            stdout_digest: hex_digest(stdout.as_bytes()),
+            stderr_digest: hex_digest(stderr.as_bytes()),
+            duration_ms,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CanaryReport {
+    pub run_id: String,
+    pub checks: Vec<EvaluationCheck>,
+    pub changed_files: BTreeMap<String, String>,
+}
+
+impl CanaryReport {
+    pub fn new(
+        run_id: &str,
+        checks: Vec<EvaluationCheck>,
+        changed_files: BTreeMap<String, String>,
+    ) -> Result<Self, EvolutionError> {
+        if run_id.trim().is_empty() || run_id.len() > 256 || checks.is_empty() || checks.len() > 64 {
+            return Err(EvolutionError::InvalidProposal(
+                "canary report requires a run id of 1 to 256 bytes and 1 to 64 checks".into(),
+            ));
+        }
+        if changed_files.len() > 2_000 {
+            return Err(EvolutionError::InvalidProposal(
+                "canary report cannot contain more than 2000 changed files".into(),
+            ));
+        }
+        for (path, digest) in &changed_files {
+            if !valid_relative_path(path) {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "invalid changed-file path '{}'",
+                    path
+                )));
+            }
+            if !is_hex_digest(digest) {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "changed-file hash for '{}' is not a 64-character digest",
+                    path
+                )));
+            }
+        }
+        Ok(Self {
+            run_id: run_id.to_string(),
+            checks,
+            changed_files,
+        })
+    }
+
+    pub fn passed(&self) -> bool {
+        !self.checks.is_empty() && self.checks.iter().all(|check| check.passed)
+    }
+
+    pub fn evidence_digest(&self) -> Result<String, EvolutionError> {
+        let payload = serde_json::to_vec(self)
+            .map_err(|error| EvolutionError::Serialization(error.to_string()))?;
+        Ok(hex_digest(&payload))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +326,40 @@ impl EvolutionLedger {
         })
     }
 
+    pub fn finalize_canary_report(
+        &self,
+        id: &str,
+        report: CanaryReport,
+    ) -> Result<(), EvolutionError> {
+        let evidence = report.evidence_digest()?;
+        self.transition(id, |record| match record.state {
+            ProposalState::Canary { ref run_id, .. } if run_id != &report.run_id => {
+                Err(EvolutionError::StateConflict(format!(
+                    "canary report run '{}' does not match active run '{}'",
+                    report.run_id, run_id
+                )))
+            }
+            ProposalState::Canary { .. } if report.passed() => {
+                record.state = ProposalState::Applied {
+                    evidence,
+                    completed_at_ms: now_ms(),
+                };
+                Ok(())
+            }
+            ProposalState::Canary { .. } => {
+                record.state = ProposalState::RolledBack {
+                    reason: evidence,
+                    completed_at_ms: now_ms(),
+                };
+                Ok(())
+            }
+            ref state => Err(EvolutionError::StateConflict(format!(
+                "cannot finalize canary report from state {:?}",
+                state
+            ))),
+        })
+    }
+
     pub fn finalize_canary(
         &self,
         id: &str,
@@ -367,6 +491,21 @@ fn validate_record(record: &ProposalRecord) -> Result<(), EvolutionError> {
     }
 }
 
+fn valid_relative_path(path: &str) -> bool {
+    if path.trim().is_empty() || path == "." {
+        return false;
+    }
+    let path = Path::new(path);
+    !path.is_absolute()
+        && path.components().all(|component| {
+            !matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+        })
+}
+
+fn is_hex_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn proposal_content_hash(proposal: &EvolutionProposal) -> Result<String, EvolutionError> {
     let payload = serde_json::to_vec(&(
         &proposal.title,
@@ -436,6 +575,27 @@ mod tests {
             tampered.verify(),
             Err(EvolutionError::InvalidProposal(_))
         ));
+        let mut forged_signature = signed.clone();
+        forged_signature.signature[0] ^= 1;
+        assert!(matches!(
+            forged_signature.verify(),
+            Err(EvolutionError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn canary_report_rejects_unsafe_paths_and_malformed_digests() {
+        let check = EvaluationCheck::from_output("cargo test", true, Some(0), "ok", "", 1).unwrap();
+        let unsafe_path = BTreeMap::from([(String::from("../escape"), "0".repeat(64))]);
+        assert!(matches!(
+            CanaryReport::new("run-1", vec![check.clone()], unsafe_path),
+            Err(EvolutionError::InvalidProposal(_))
+        ));
+        let malformed_digest = BTreeMap::from([(String::from("src/lib.rs"), String::from("bad"))]);
+        assert!(matches!(
+            CanaryReport::new("run-1", vec![check], malformed_digest),
+            Err(EvolutionError::InvalidProposal(_))
+        ));
     }
 
     #[test]
@@ -450,9 +610,17 @@ mod tests {
         ));
         ledger.approve(&id, "reviewer:local").unwrap();
         ledger.start_canary(&id, "run-1").unwrap();
-        ledger
-            .finalize_canary(&id, true, "all tests passed")
-            .unwrap();
+        let check = EvaluationCheck::from_output(
+            "cargo test --all-targets",
+            true,
+            Some(0),
+            "37 tests passed",
+            "",
+            42,
+        )
+        .unwrap();
+        let report = CanaryReport::new("run-1", vec![check], BTreeMap::new()).unwrap();
+        ledger.finalize_canary_report(&id, report).unwrap();
         assert!(matches!(
             ledger.get(&id).unwrap().unwrap().state,
             ProposalState::Applied { .. }
@@ -461,6 +629,35 @@ mod tests {
         assert!(matches!(
             reopened.get(&id).unwrap().unwrap().state,
             ProposalState::Applied { .. }
+        ));
+    }
+
+    #[test]
+    fn mismatched_or_failed_canary_report_cannot_apply() {
+        let dir = tempdir().unwrap();
+        let ledger = EvolutionLedger::open(dir.path().join("evolution.json")).unwrap();
+        let id = ledger.propose(signed_proposal()).unwrap();
+        ledger.approve(&id, "reviewer:local").unwrap();
+        ledger.start_canary(&id, "run-1").unwrap();
+        let failed = EvaluationCheck::from_output(
+            "cargo test",
+            false,
+            Some(1),
+            "",
+            "failure",
+            10,
+        )
+        .unwrap();
+        let mismatched = CanaryReport::new("run-2", vec![failed.clone()], BTreeMap::new()).unwrap();
+        assert!(matches!(
+            ledger.finalize_canary_report(&id, mismatched),
+            Err(EvolutionError::StateConflict(_))
+        ));
+        let report = CanaryReport::new("run-1", vec![failed], BTreeMap::new()).unwrap();
+        ledger.finalize_canary_report(&id, report).unwrap();
+        assert!(matches!(
+            ledger.get(&id).unwrap().unwrap().state,
+            ProposalState::RolledBack { .. }
         ));
     }
 
