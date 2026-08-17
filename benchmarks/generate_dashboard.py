@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -83,7 +84,7 @@ if profile:
         go.Scatter(
             x=x,
             y=[row["baseline_p95_ms"] for row in profile],
-            name="baseline p95",
+            name="repo baseline p95",
             legendgroup="repository-profile",
             line={"color": "#64748b", "dash": "dash", "width": 2},
             mode="lines+markers",
@@ -96,7 +97,7 @@ if profile:
         go.Scatter(
             x=x,
             y=[row["optimized_p95_ms"] for row in profile],
-            name="optimized p95",
+            name="repo optimized p95",
             legendgroup="repository-profile",
             line={"color": "#0f766e", "width": 2},
             mode="lines+markers",
@@ -109,7 +110,7 @@ if profile:
         go.Scatter(
             x=x,
             y=[row["baseline_throughput_ops_per_sec"] for row in profile],
-            name="baseline throughput",
+            name="repo baseline throughput",
             legendgroup="repository-profile",
             showlegend=False,
             line={"color": "#64748b", "dash": "dash", "width": 2},
@@ -123,7 +124,7 @@ if profile:
         go.Scatter(
             x=x,
             y=[row["optimized_throughput_ops_per_sec"] for row in profile],
-            name="optimized throughput",
+            name="repo optimized throughput",
             legendgroup="repository-profile",
             showlegend=False,
             line={"color": "#0f766e", "width": 2},
@@ -134,18 +135,94 @@ if profile:
         col=2,
     )
 
+def log_ticks(values: list[float]) -> tuple[list[float], list[str]]:
+    positive = [value for value in values if value > 0]
+    if not positive:
+        return [], []
+    lower = 10 ** math.floor(math.log10(min(positive)))
+    upper = 10 ** math.ceil(math.log10(max(positive)))
+    ticks: list[float] = []
+    labels: list[str] = []
+    exponent = math.floor(math.log10(lower))
+    while 10**exponent <= upper:
+        for mantissa in (1, 2, 5):
+            value = mantissa * (10**exponent)
+            if lower <= value <= upper:
+                ticks.append(value)
+                if value >= 1_000_000:
+                    labels.append(f"{value / 1_000_000:g}M")
+                elif value >= 1_000:
+                    labels.append(f"{value / 1_000:g}K")
+                elif value >= 1:
+                    labels.append(f"{value:g}")
+                else:
+                    labels.append(f"{value:.3g}")
+        exponent += 1
+    return ticks, labels
+
+latency_values = [row["p95_ns"] / 1_000_000 for row in rows]
+throughput_values = [row["throughput_ops_per_sec"] for row in rows]
+if profile:
+    latency_values.extend(
+        value
+        for row in profile
+        for value in (row["baseline_p95_ms"], row["optimized_p95_ms"])
+    )
+    throughput_values.extend(
+        value
+        for row in profile
+        for value in (
+            row["baseline_throughput_ops_per_sec"],
+            row["optimized_throughput_ops_per_sec"],
+        )
+    )
+latency_ticks, latency_labels = log_ticks(latency_values)
+throughput_ticks, throughput_labels = log_ticks(throughput_values)
+
 fig.update_xaxes(title_text="Worker concurrency", tickmode="array", tickvals=concurrencies)
-fig.update_yaxes(title_text="p95 latency (ms)", type="log", row=1, col=1)
-fig.update_yaxes(title_text="throughput (ops/s)", type="log", row=1, col=2)
-fig.update_yaxes(title_text="p95 latency (ms)", type="log", row=2, col=1)
-fig.update_yaxes(title_text="throughput (ops/s)", type="log", row=2, col=2)
+fig.update_yaxes(
+    title_text="p95 latency (ms; log scale)",
+    type="log",
+    tickmode="array",
+    tickvals=latency_ticks,
+    ticktext=latency_labels,
+    row=1,
+    col=1,
+)
+fig.update_yaxes(
+    title_text="throughput (ops/s; log scale)",
+    type="log",
+    tickmode="array",
+    tickvals=throughput_ticks,
+    ticktext=throughput_labels,
+    row=1,
+    col=2,
+)
+fig.update_yaxes(
+    title_text="p95 latency (ms; log scale)",
+    type="log",
+    tickmode="array",
+    tickvals=latency_ticks,
+    ticktext=latency_labels,
+    row=2,
+    col=1,
+)
+fig.update_yaxes(
+    title_text="throughput (ops/s; log scale)",
+    type="log",
+    tickmode="array",
+    tickvals=throughput_ticks,
+    ticktext=throughput_labels,
+    row=2,
+    col=2,
+)
 fig.update_layout(
     title="un1c0 interactive performance dashboard",
     template="plotly_white",
     height=1050,
     width=1500,
     hovermode="x unified",
-    legend={"orientation": "v", "x": 1.02, "y": 1.0},
+    legend={"orientation": "v", "x": 1.02, "y": 1.0, "title": {"text": "Benchmark series"}},
     margin={"l": 80, "r": 260, "t": 90, "b": 70},
 )
 fig.write_html(ROOT / "benchmark_dashboard.html", include_plotlyjs=True, full_html=True)

@@ -253,6 +253,46 @@ impl ConsentScopedTool {
     }
 }
 
+impl ConsentScopedTool {
+    fn authorize_input(
+        &self,
+        input: &Value,
+        approved: bool,
+    ) -> Result<ConsentManifest, AgentError> {
+        let manifest = self.store.get(&self.manifest_id)?;
+        manifest.authorize(&self.spec.name, &self.spec.capabilities, approved)?;
+        manifest.validate_host(input)?;
+        let input_size = to_vec(input)
+            .map_err(|error| AgentError::Serialization(error.to_string()))?
+            .len();
+        if input_size > manifest.max_input_bytes {
+            return Err(AgentError::BudgetExceeded(format!(
+                "integration input is {} bytes, limit is {}",
+                input_size, manifest.max_input_bytes
+            )));
+        }
+        Ok(manifest)
+    }
+
+    fn execute_authorized(
+        &self,
+        input: &Value,
+        manifest: &ConsentManifest,
+    ) -> Result<Value, AgentError> {
+        let output = (self.handler)(input)?;
+        let output_size = to_vec(&output)
+            .map_err(|error| AgentError::Serialization(error.to_string()))?
+            .len();
+        if output_size > manifest.max_output_bytes {
+            return Err(AgentError::BudgetExceeded(format!(
+                "integration output is {} bytes, limit is {}",
+                output_size, manifest.max_output_bytes
+            )));
+        }
+        Ok(output)
+    }
+}
+
 impl Tool for ConsentScopedTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
@@ -268,29 +308,128 @@ impl Tool for ConsentScopedTool {
         _workspace: &Workspace,
         approved: bool,
     ) -> Result<Value, AgentError> {
-        let manifest = self.store.get(&self.manifest_id)?;
-        manifest.authorize(&self.spec.name, &self.spec.capabilities, approved)?;
-        manifest.validate_host(input)?;
-        let input_size = to_vec(input)
+        let manifest = self.authorize_input(input, approved)?;
+        self.execute_authorized(input, &manifest)
+    }
+}
+
+/// LSP request kinds that may read a bounded source snapshot from the workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspRequestKind {
+    Diagnostics,
+    CodeActions,
+}
+
+impl LspRequestKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Diagnostics => "diagnostics",
+            Self::CodeActions => "code_actions",
+        }
+    }
+}
+
+/// Consent-scoped LSP adapter that validates a workspace-relative path and
+/// injects a bounded source snapshot before dispatching to the LSP handler.
+pub struct LspWorkspaceTool {
+    inner: ConsentScopedTool,
+    request_kind: LspRequestKind,
+    max_source_bytes: usize,
+}
+
+impl LspWorkspaceTool {
+    pub fn new<F>(
+        spec: ToolSpec,
+        manifest_id: &str,
+        store: ConsentStore,
+        request_kind: LspRequestKind,
+        max_source_bytes: usize,
+        handler: F,
+    ) -> Result<Self, AgentError>
+    where
+        F: Fn(&Value) -> Result<Value, AgentError> + Send + Sync + 'static,
+    {
+        if max_source_bytes == 0 {
+            return Err(AgentError::Input(
+                "LSP source snapshot limit must be greater than zero".into(),
+            ));
+        }
+        if !spec.capabilities.contains(&Capability::LspAccess)
+            || !spec.capabilities.contains(&Capability::WorkspaceRead)
+        {
+            return Err(AgentError::Input(
+                "LSP workspace tools require lsp.access and workspace.read".into(),
+            ));
+        }
+        Ok(Self {
+            inner: ConsentScopedTool::new(spec, manifest_id, store, handler)?,
+            request_kind,
+            max_source_bytes,
+        })
+    }
+
+    pub fn manifest_id(&self) -> &str {
+        self.inner.manifest_id()
+    }
+
+    pub fn request_kind(&self) -> LspRequestKind {
+        self.request_kind
+    }
+}
+
+impl Tool for LspWorkspaceTool {
+    fn spec(&self) -> &ToolSpec {
+        self.inner.spec()
+    }
+
+    fn execute(&self, input: &Value, workspace: &Workspace) -> Result<Value, AgentError> {
+        self.execute_with_approval(input, workspace, false)
+    }
+
+    fn execute_with_approval(
+        &self,
+        input: &Value,
+        workspace: &Workspace,
+        approved: bool,
+    ) -> Result<Value, AgentError> {
+        // Authorize before touching the workspace so a revoked or unapproved
+        // manifest cannot be used to probe file existence.
+        let manifest = self.inner.authorize_input(input, approved)?;
+        let object = input.as_object().ok_or_else(|| {
+            AgentError::Input("LSP request must be a JSON object with a workspace path".into())
+        })?;
+        let path = object
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| AgentError::Input("LSP request requires a non-empty path".into()))?;
+        if let Some(operation) = object.get("operation").and_then(Value::as_str) {
+            if operation != self.request_kind.as_str() {
+                return Err(AgentError::Input(format!(
+                    "LSP request operation '{}' does not match '{}'",
+                    operation,
+                    self.request_kind.as_str()
+                )));
+            }
+        }
+        let source = workspace.read_file(path, self.max_source_bytes)?;
+        let mut enriched = object.clone();
+        enriched.insert(
+            "operation".into(),
+            Value::String(self.request_kind.as_str().into()),
+        );
+        enriched.insert("workspace_source".into(), Value::String(source));
+        let enriched_input = Value::Object(enriched);
+        let enriched_size = to_vec(&enriched_input)
             .map_err(|error| AgentError::Serialization(error.to_string()))?
             .len();
-        if input_size > manifest.max_input_bytes {
+        if enriched_size > manifest.max_input_bytes {
             return Err(AgentError::BudgetExceeded(format!(
-                "integration input is {} bytes, limit is {}",
-                input_size, manifest.max_input_bytes
+                "LSP enriched input is {} bytes, limit is {}",
+                enriched_size, manifest.max_input_bytes
             )));
         }
-        let output = (self.handler)(input)?;
-        let output_size = to_vec(&output)
-            .map_err(|error| AgentError::Serialization(error.to_string()))?
-            .len();
-        if output_size > manifest.max_output_bytes {
-            return Err(AgentError::BudgetExceeded(format!(
-                "integration output is {} bytes, limit is {}",
-                output_size, manifest.max_output_bytes
-            )));
-        }
-        Ok(output)
+        self.inner.execute_authorized(&enriched_input, &manifest)
     }
 }
 
@@ -299,6 +438,7 @@ pub type SkillToolAdapter = ConsentScopedTool;
 pub type ApiToolAdapter = ConsentScopedTool;
 pub type WebToolAdapter = ConsentScopedTool;
 pub type LspToolAdapter = ConsentScopedTool;
+pub type WorkspaceLspTool = LspWorkspaceTool;
 
 #[cfg(test)]
 mod tests {
@@ -424,6 +564,90 @@ mod tests {
         tool.execute(&json!({"host":"api.example.test"}), &workspace)
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn lsp_workspace_tool_requires_approval_and_injects_bounded_source() {
+        let store = ConsentStore::default();
+        let manifest = ConsentManifest::new(
+            "lsp.local.rust",
+            "1.0.0",
+            IntegrationKind::Lsp,
+            "Local workspace-aware LSP adapter",
+            [Capability::WorkspaceRead, Capability::LspAccess]
+                .into_iter()
+                .collect(),
+            ["lsp_diagnostics".to_string()].into_iter().collect(),
+            true,
+        )
+        .unwrap();
+        store.register(manifest).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool = LspWorkspaceTool::new(
+            ToolSpec {
+                name: "lsp_diagnostics".into(),
+                description: "Request diagnostics for a workspace file".into(),
+                capabilities: [Capability::WorkspaceRead, Capability::LspAccess]
+                    .into_iter()
+                    .collect(),
+                input_schema: json!({"type":"object","required":["path"]}),
+                default_timeout_ms: 1_000,
+            },
+            "lsp.local.rust",
+            store.clone(),
+            LspRequestKind::Diagnostics,
+            1_024,
+            {
+                let calls = Arc::clone(&calls);
+                move |input| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({
+                        "operation": input["operation"].clone(),
+                        "source_bytes": input["workspace_source"].as_str().unwrap().len(),
+                    }))
+                }
+            },
+        )
+        .unwrap();
+        let workspace_dir = tempdir().unwrap();
+        let source_path = workspace_dir.path().join("src/main.rs");
+        std::fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        std::fs::write(&source_path, "fn main() {}\n").unwrap();
+        let workspace = Workspace::new(workspace_dir.path()).unwrap();
+        let request = json!({"path":"src/main.rs"});
+
+        assert!(matches!(
+            tool.execute(&request, &workspace),
+            Err(AgentError::ConsentApprovalRequired(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let output = tool
+            .execute_with_approval(&request, &workspace, true)
+            .unwrap();
+        assert_eq!(output["operation"], "diagnostics");
+        assert_eq!(output["source_bytes"], 13);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        assert!(matches!(
+            tool.execute_with_approval(
+                &json!({"path":"src/main.rs","operation":"code_actions"}),
+                &workspace,
+                true,
+            ),
+            Err(AgentError::Input(_))
+        ));
+        assert!(matches!(
+            tool.execute_with_approval(&json!({"path":"../outside.rs"}), &workspace, true),
+            Err(AgentError::Workspace(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        store.revoke("lsp.local.rust").unwrap();
+        assert!(matches!(
+            tool.execute_with_approval(&request, &workspace, true),
+            Err(AgentError::ConsentDenied(_))
+        ));
     }
 
     #[test]
