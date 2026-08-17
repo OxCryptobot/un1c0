@@ -47,6 +47,12 @@ pub enum ConsensusError {
     SnapshotPersistence(String),
     #[error("consensus message authentication failed: {0}")]
     Unauthenticated(String),
+    #[error("invalid membership change: {0}")]
+    InvalidMembershipChange(String),
+    #[error("membership change is not in progress")]
+    NoMembershipChange,
+    #[error("membership change is already in progress")]
+    MembershipChangeInProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +66,17 @@ pub enum ConsensusRole {
 pub enum StateCommand {
     Set { key: String, value: String },
     Delete { key: String },
+    ConfigurationJoint {
+        old_members: BTreeSet<String>,
+        new_members: BTreeSet<String>,
+    },
+    ConfigurationFinal { members: BTreeSet<String> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigurationPhase {
+    Stable,
+    Joint,
 }
 
 impl StateCommand {
@@ -75,6 +92,14 @@ impl StateCommand {
                 }
             }
             Self::Delete { key } => validate_key(key)?,
+            Self::ConfigurationJoint {
+                old_members,
+                new_members,
+            } => {
+                validate_members(old_members)?;
+                validate_members(new_members)?;
+            }
+            Self::ConfigurationFinal { members } => validate_members(members)?,
         }
         Ok(())
     }
@@ -87,6 +112,7 @@ impl StateCommand {
             Self::Delete { key } => {
                 state.remove(key);
             }
+            Self::ConfigurationJoint { .. } | Self::ConfigurationFinal { .. } => {}
         }
     }
 }
@@ -330,6 +356,23 @@ impl DurableSnapshotStore {
         Ok(())
     }
 
+    pub fn recover_staging(&self) -> Result<bool, ConsensusError> {
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let temporary = parent.join(format!(
+            ".{}.tmp",
+            self.path.file_name().and_then(|name| name.to_str()).unwrap_or("snapshot")
+        ));
+        if !temporary.exists() {
+            return Ok(false);
+        }
+        fs::remove_file(&temporary)
+            .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(true)
+    }
+
     pub fn load(&self) -> Result<ReplicatedSnapshot, ConsensusError> {
         let metadata = fs::metadata(&self.path)
             .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
@@ -352,6 +395,10 @@ impl DurableSnapshotStore {
 pub struct ConsensusNode {
     id: String,
     members: BTreeSet<String>,
+    previous_members: Option<BTreeSet<String>>,
+    configuration_phase: ConfigurationPhase,
+    joint_config_index: Option<u64>,
+    pending_finalization: Option<u64>,
     max_log_entries: usize,
     role: ConsensusRole,
     current_term: u64,
@@ -371,12 +418,7 @@ impl ConsensusNode {
         max_log_entries: usize,
     ) -> Result<Self, ConsensusError> {
         validate_node_id(id)?;
-        if members.is_empty() || members.len() > MAX_MEMBERS {
-            return Err(ConsensusError::InvalidCluster(format!(
-                "cluster must contain 1 to {} members",
-                MAX_MEMBERS
-            )));
-        }
+        validate_members(&members)?;
         if !members.contains(id) {
             return Err(ConsensusError::InvalidCluster(format!(
                 "node '{}' is not a cluster member",
@@ -392,6 +434,10 @@ impl ConsensusNode {
         Ok(Self {
             id: id.to_string(),
             members,
+            previous_members: None,
+            configuration_phase: ConfigurationPhase::Stable,
+            joint_config_index: None,
+            pending_finalization: None,
             max_log_entries,
             role: ConsensusRole::Follower,
             current_term: 0,
@@ -426,7 +472,77 @@ impl ConsensusNode {
     }
 
     pub fn quorum_size(&self) -> usize {
-        self.members.len() / 2 + 1
+        quorum_size(&self.members)
+    }
+
+    pub fn configuration_phase(&self) -> ConfigurationPhase {
+        self.configuration_phase
+    }
+
+    pub fn members(&self) -> BTreeSet<String> {
+        self.members.clone()
+    }
+
+    pub fn previous_members(&self) -> Option<BTreeSet<String>> {
+        self.previous_members.clone()
+    }
+
+    pub fn begin_membership_change(
+        &mut self,
+        proposed_members: BTreeSet<String>,
+    ) -> Result<LogEntry, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        if self.configuration_phase != ConfigurationPhase::Stable {
+            return Err(ConsensusError::MembershipChangeInProgress);
+        }
+        validate_members(&proposed_members)?;
+        if proposed_members == self.members {
+            return Err(ConsensusError::InvalidMembershipChange(
+                "proposed membership is unchanged".into(),
+            ));
+        }
+        let old_members = self.members.clone();
+        let entry = self.propose(StateCommand::ConfigurationJoint {
+            old_members: old_members.clone(),
+            new_members: proposed_members.clone(),
+        })?;
+        self.previous_members = Some(old_members);
+        self.members = proposed_members;
+        self.configuration_phase = ConfigurationPhase::Joint;
+        self.joint_config_index = Some(entry.index);
+        self.pending_finalization = None;
+        self.rebuild_replication_progress();
+        Ok(entry)
+    }
+
+    pub fn finalize_membership_change(&mut self) -> Result<LogEntry, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        let old_members = self
+            .previous_members
+            .clone()
+            .ok_or(ConsensusError::NoMembershipChange)?;
+        let joint_index = self
+            .joint_config_index
+            .ok_or(ConsensusError::NoMembershipChange)?;
+        if self.commit_index < joint_index {
+            return Err(ConsensusError::InvalidMembershipChange(
+                "joint configuration must commit before finalization".into(),
+            ));
+        }
+        let entry = self.propose(StateCommand::ConfigurationFinal {
+            members: self.members.clone(),
+        })?;
+        self.pending_finalization = Some(entry.index);
+        self.rebuild_replication_progress();
+        if !self.members.contains(&self.id) && old_members.contains(&self.id) {
+            self.role = ConsensusRole::Follower;
+            self.voted_for = None;
+        }
+        Ok(entry)
     }
 
     pub fn state_value(&self, key: &str) -> Option<&str> {
@@ -492,7 +608,7 @@ impl ConsensusNode {
         request: VoteRequest,
     ) -> Result<VoteResponse, ConsensusError> {
         validate_node_id(&request.candidate_id)?;
-        if !self.members.contains(&request.candidate_id) {
+        if !self.accepted_members().contains(&request.candidate_id) {
             return Err(ConsensusError::UnknownMember(request.candidate_id));
         }
         if request.term > self.current_term {
@@ -540,7 +656,7 @@ impl ConsensusNode {
         if response.granted {
             self.votes_received.insert(response.voter_id);
         }
-        if self.votes_received.len() >= self.quorum_size() {
+        if self.has_vote_quorum(&self.votes_received) {
             self.role = ConsensusRole::Leader;
             self.voted_for = Some(self.id.clone());
             self.replication_progress.clear();
@@ -576,7 +692,7 @@ impl ConsensusNode {
             return Err(ConsensusError::NotLeader);
         }
         validate_node_id(follower_id)?;
-        if !self.members.contains(follower_id) {
+        if !self.accepted_members().contains(follower_id) {
             return Err(ConsensusError::UnknownMember(follower_id.to_string()));
         }
         if follower_id == self.id {
@@ -623,7 +739,7 @@ impl ConsensusNode {
         request: AppendEntries,
     ) -> Result<AppendResponse, ConsensusError> {
         validate_node_id(&request.leader_id)?;
-        if !self.members.contains(&request.leader_id) {
+        if !self.accepted_members().contains(&request.leader_id) {
             return Err(ConsensusError::UnknownMember(request.leader_id));
         }
         if request.term < self.current_term {
@@ -688,7 +804,7 @@ impl ConsensusNode {
 
     pub fn acknowledge_append(&mut self, response: AppendResponse) -> Result<bool, ConsensusError> {
         validate_node_id(&response.follower_id)?;
-        if !self.members.contains(&response.follower_id) {
+        if !self.accepted_members().contains(&response.follower_id) {
             return Err(ConsensusError::UnknownMember(response.follower_id));
         }
         if response.term > self.current_term {
@@ -715,17 +831,18 @@ impl ConsensusNode {
     fn advance_commit_index(&mut self) -> Result<bool, ConsensusError> {
         let mut changed = false;
         for index in (self.commit_index + 1)..=(self.log.len() as u64) {
-            let replicated = self
+            let replicated_members: BTreeSet<String> = self
                 .replication_progress
-                .values()
-                .filter(|match_index| **match_index >= index)
-                .count();
+                .iter()
+                .filter(|(_, match_index)| **match_index >= index)
+                .map(|(member, _)| member.clone())
+                .collect();
             let current_term_entry = self
                 .log
                 .get(index as usize - 1)
                 .map(|entry| entry.term == self.current_term)
                 .unwrap_or(false);
-            if replicated >= self.quorum_size() && current_term_entry {
+            if self.has_vote_quorum(&replicated_members) && current_term_entry {
                 self.commit_index = index;
                 changed = true;
             }
@@ -735,15 +852,79 @@ impl ConsensusNode {
     }
 
     fn apply_committed(&mut self) {
+        let mut configuration_changed = false;
         while self.last_applied < self.commit_index {
             let index = self.last_applied as usize;
-            if let Some(entry) = self.log.get(index) {
-                entry.command.apply(&mut self.state);
-                self.last_applied += 1;
-            } else {
+            let Some(entry) = self.log.get(index).cloned() else {
                 break;
+            };
+            match &entry.command {
+                StateCommand::ConfigurationJoint {
+                    old_members,
+                    new_members,
+                } => {
+                    if self.configuration_phase == ConfigurationPhase::Stable {
+                        self.previous_members = Some(old_members.clone());
+                        self.members = new_members.clone();
+                        self.configuration_phase = ConfigurationPhase::Joint;
+                        self.joint_config_index = Some(entry.index);
+                        configuration_changed = true;
+                    }
+                }
+                StateCommand::ConfigurationFinal { members } => {
+                    self.members = members.clone();
+                    self.previous_members = None;
+                    self.configuration_phase = ConfigurationPhase::Stable;
+                    self.joint_config_index = None;
+                    self.pending_finalization = None;
+                    configuration_changed = true;
+                }
+                _ => entry.command.apply(&mut self.state),
             }
+            self.last_applied += 1;
         }
+        if self
+            .pending_finalization
+            .is_some_and(|index| index <= self.commit_index)
+        {
+            self.configuration_phase = ConfigurationPhase::Stable;
+            self.previous_members = None;
+            self.joint_config_index = None;
+            self.pending_finalization = None;
+            configuration_changed = true;
+        }
+        if configuration_changed {
+            self.rebuild_replication_progress();
+        }
+    }
+
+    fn accepted_members(&self) -> BTreeSet<String> {
+        let mut members = self.members.clone();
+        if let Some(previous) = &self.previous_members {
+            members.extend(previous.iter().cloned());
+        }
+        members
+    }
+
+    fn has_vote_quorum(&self, voters: &BTreeSet<String>) -> bool {
+        let current_votes = voters.intersection(&self.members).count();
+        if current_votes < quorum_size(&self.members) {
+            return false;
+        }
+        self.previous_members.as_ref().is_none_or(|previous| {
+            voters.intersection(previous).count() >= quorum_size(previous)
+        })
+    }
+
+    fn rebuild_replication_progress(&mut self) {
+        let previous = self.replication_progress.clone();
+        self.replication_progress.clear();
+        for member in self.accepted_members() {
+            self.replication_progress
+                .insert(member.clone(), previous.get(&member).copied().unwrap_or_default());
+        }
+        self.replication_progress
+            .insert(self.id.clone(), self.log.len() as u64);
     }
 
     fn last_log_position(&self) -> (u64, u64) {
@@ -770,6 +951,23 @@ fn validate_nonce(nonce: &str) -> Result<(), ConsensusError> {
         ));
     }
     Ok(())
+}
+
+fn validate_members(members: &BTreeSet<String>) -> Result<(), ConsensusError> {
+    if members.is_empty() || members.len() > MAX_MEMBERS {
+        return Err(ConsensusError::InvalidCluster(format!(
+            "cluster must contain 1 to {} members",
+            MAX_MEMBERS
+        )));
+    }
+    for member in members {
+        validate_node_id(member)?;
+    }
+    Ok(())
+}
+
+fn quorum_size(members: &BTreeSet<String>) -> usize {
+    members.len() / 2 + 1
 }
 
 fn validate_node_id(id: &str) -> Result<(), ConsensusError> {

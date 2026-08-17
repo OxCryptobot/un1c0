@@ -28,6 +28,11 @@ scripts/validate_helm_security.sh >"$TMP_DIR/helm.log"
 printf '%s\n' '== focused Phase 10 integration =='
 cargo test --test phase10_security_integration >"$TMP_DIR/phase10.log"
 
+printf '%s\n' '== Phase 11 membership and failure injection =='
+cargo test --test phase11_consensus_integration >"$TMP_DIR/phase11.log"
+cargo test --test failure_injection_integration >"$TMP_DIR/failure-injection.log"
+cargo run --quiet --release --bin un1c0-consensus-bench > benchmarks/consensus_partition_metrics.json
+
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
   scripts/validate_compose_smoke.sh >"$TMP_DIR/compose.log"

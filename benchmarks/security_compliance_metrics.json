@@ -1,19 +1,67 @@
 {
+  "authenticated_consensus_partition": {
+    "benchmark": "authenticated_consensus_transport",
+    "notes": {
+      "partition": "messages crossing the partition are dropped before verification",
+      "production_limit": "not a socket, TLS, kernel, or cross-machine benchmark",
+      "quorum": "majority of a five-member configuration",
+      "transport": "in-process Ed25519 envelope verification"
+    },
+    "samples_per_scenario": 2000,
+    "scenarios": [
+      {
+        "cluster_size": 5,
+        "connected_members": 5,
+        "messages_attempted": 10000,
+        "messages_dropped": 0,
+        "messages_verified": 10000,
+        "name": "healthy",
+        "quorum_available": true,
+        "verification_p95_us": 29.315,
+        "verification_throughput_ops_per_sec": 34964.247046950666
+      },
+      {
+        "cluster_size": 5,
+        "connected_members": 3,
+        "messages_attempted": 10000,
+        "messages_dropped": 6400,
+        "messages_verified": 3600,
+        "name": "majority_partition",
+        "quorum_available": true,
+        "verification_p95_us": 28.303,
+        "verification_throughput_ops_per_sec": 34840.22264218417
+      },
+      {
+        "cluster_size": 5,
+        "connected_members": 2,
+        "messages_attempted": 10000,
+        "messages_dropped": 8400,
+        "messages_verified": 1600,
+        "name": "minority_partition",
+        "quorum_available": false,
+        "verification_p95_us": 28.253,
+        "verification_throughput_ops_per_sec": 34820.11146962277
+      }
+    ]
+  },
   "benchmark_concurrency": 8,
-  "commit": "35cbaf3588caee538481b4fca6c8cdf24b39f40f",
+  "commit": "207d89f37ae15bae71327342d4f8dad836ed69fa",
   "gates": {
     "authenticated_consensus_transport": "passed",
+    "authenticated_partition_benchmark": "passed",
     "cli_smoke": "passed",
     "compose_mtls_smoke": "passed",
     "durable_external_audit_sink": "passed",
+    "failure_injection_snapshot_recovery": "passed",
     "helm_fail_closed": "passed",
+    "phase11_membership_change": "passed",
     "python_tests": "passed",
     "rust_all_targets": "passed",
     "signer_rotation_revocation": "passed",
     "skill_validation": "passed",
     "snapshot_installation": "passed"
   },
-  "generated_at_utc": "2026-08-17T21:40:25.626176+00:00",
+  "generated_at_utc": "2026-08-17T23:22:34.774144+00:00",
   "operations": [
     {
       "baseline_errors": 0,

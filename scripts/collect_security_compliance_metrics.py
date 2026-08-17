@@ -55,6 +55,7 @@ def main() -> None:
                 "optimized_errors": after["errors"],
             }
         )
+    partition_metrics = load_json(root / "benchmarks/consensus_partition_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -69,10 +70,14 @@ def main() -> None:
             "authenticated_consensus_transport": "passed",
             "signer_rotation_revocation": "passed",
             "durable_external_audit_sink": "passed",
+            "phase11_membership_change": "passed",
+            "failure_injection_snapshot_recovery": "passed",
+            "authenticated_partition_benchmark": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
         "repository_search_before_after": profile,
+        "authenticated_consensus_partition": partition_metrics,
         "security_notes": {
             "secret_material_recorded": False,
             "cluster_mutation_performed": False,

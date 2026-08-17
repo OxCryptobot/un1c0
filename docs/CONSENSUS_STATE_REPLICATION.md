@@ -15,11 +15,15 @@
 | Commit | A leader applies only current-term entries acknowledged by a quorum. A local append alone does not commit state. |
 | Replication | `AppendEntries` validates previous index/term, rejects stale terms, truncates conflicting suffixes, appends bounded entries, and advances followers only to the leader's commit index. |
 | Snapshot | Replicated state snapshots include term, commit index, last-applied index, state, and a deterministic state hash for equality checks. |
+| Membership change | `ConfigurationJoint` carries old and new sets, requires a double majority, blocks concurrent changes, and precedes `ConfigurationFinal`. |
+| Dynamic re-voting | Elections and commit acknowledgements use the active set; joint mode requires a majority in both old and new sets. |
+| Crash recovery | Snapshot staging can be explicitly recovered after a process abort before rename; invalid installs leave node state unchanged. |
+| Authenticated benchmark | Deterministic Ed25519 envelope benchmark reports verified/dropped messages, p95 verification time, throughput, and quorum availability under partitions. |
 
 ## Evidence
 
-The unit tests cover quorum election, leader replication, stale terms, command limits, and log limits. The public integration test verifies election, follower append, quorum commit, follower commit notification, and identical state hashes across nodes.
+The unit tests cover quorum election, leader replication, stale terms, command limits, and log limits. The public integration test verifies election, follower append, quorum commit, follower commit notification, and identical state hashes across nodes. Phase 11 integration tests verify double-majority joint consensus, final membership adoption by existing and late nodes, dynamic re-voting, single-flight bounds, process-boundary crash recovery, invalid snapshot rollback, and the authenticated partition benchmark.
 
 ## Production boundary
 
-This slice is intentionally not a complete production consensus deployment. It still requires an authenticated transport, election timers, durable log and snapshot storage, backpressure, log compaction, membership-change protocol, metrics, network partition handling, and failure-injection testing before production promotion. Runtime policy and consent manifests remain authoritative for all tools, MCP methods, network access, and secrets; cluster membership does not grant any of those capabilities.
+This slice is intentionally not a complete production consensus deployment. It still requires real socket/TLS or mesh transport, election timers and failure detectors, durable log compaction, membership configuration backup/restore, replay windows, backpressure, metrics export, and cross-machine partition testing before production promotion. The local partition benchmark measures in-process Ed25519 verification and drop filtering, not network latency or kernel behavior. Runtime policy and consent manifests remain authoritative for all tools, MCP methods, network access, and secrets; cluster membership does not grant any of those capabilities.
