@@ -84,6 +84,7 @@ The kernel does not embed a particular model provider. A future provider adapter
 | 6 | MCP/skill adapters with explicit consent and capability manifests | Phases 1–5; implemented in `integration.rs` |
 | 7 | Controlled evolution service with signed proposals and regression evaluation | Phases 1–6; lifecycle ledger implemented in `evolution.rs` |
 | 8 | Bounded distributed consensus, quorum commit, and deterministic replicated state snapshots | Phases 1–7; transport-agnostic core implemented in `consensus.rs` |
+| 9 | Zero-trust service mesh identity/method authorization and cryptographic audit evidence | Phases 1–8; mesh/audit core implemented in `security.rs` and optional Istio resources in Helm |
 
 ## Non-goals of the first implementation
 
@@ -98,3 +99,5 @@ The current batch adds consent-scoped integration adapters for MCP, skills, APIs
 The Compose smoke path now generates disposable certificates into an isolated temporary directory, passes that directory through `CERTS_DIR`, waits for the nginx mTLS endpoint explicitly, and removes the certificate bundle during cleanup. This keeps private keys out of source control and prevents stale ignored keys from invalidating integration results.
 
 The next architecture batch adds a bounded, transport-agnostic consensus core. `ConsensusNode` validates cluster membership, tracks terms and roles, runs quorum-based elections, refuses leader proposals from followers, appends hashed state commands, requires a current-term quorum before applying entries, validates `AppendEntries` predecessor terms and conflicts, and exposes deterministic replicated-state snapshots. Key/value sizes, member count, and log length are bounded; transport authentication, election timers, durable log compaction, membership changes, and production failure injection remain explicit deployment-layer work.
+
+The current security batch adds a transport-agnostic `ZeroTrustMesh` policy engine and `AuditLog`. Mesh requests must bind a trust-domain identity, audience, certificate SHA-256 fingerprint, source-to-destination relation, and method allowlist; decisions can be recorded as bounded metadata digests in an Ed25519-signed, SHA-256 hash-chained append-only log. Helm optionally emits strict Istio `PeerAuthentication`, explicit `AuthorizationPolicy` allowlists, per-component service accounts, sidecar injection labels, and control-plane egress rules. The local audit chain is evidence integrity, not distributed consensus; signer rotation, durable external sinks, and server-side mesh rollout remain promotion gates.

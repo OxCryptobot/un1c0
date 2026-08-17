@@ -69,6 +69,17 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.mesh.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "mesh.controlPlaneNamespace is required when mesh.enabled is true" .Values.mesh.controlPlaneNamespace | quote }}
+      ports:
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15017
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -108,4 +119,15 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.mesh.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "mesh.controlPlaneNamespace is required when mesh.enabled is true" .Values.mesh.controlPlaneNamespace | quote }}
+      ports:
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15017
+    {{- end }}
 {{- end }}

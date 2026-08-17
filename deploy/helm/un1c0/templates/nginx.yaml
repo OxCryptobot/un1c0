@@ -41,8 +41,11 @@ spec:
       labels:
         {{- include "un1c0.labels" . | nindent 8 }}
         app.kubernetes.io/component: nginx
+        {{- if .Values.mesh.enabled }}
+        sidecar.istio.io/inject: "true"
+        {{- end }}
     spec:
-      serviceAccountName: {{ include "un1c0.serviceAccountName" . }}
+      serviceAccountName: {{ include "un1c0.nginxServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.nginx.podSecurityContext | nindent 8 }}

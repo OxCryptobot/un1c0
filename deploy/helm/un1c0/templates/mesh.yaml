@@ -1,0 +1,90 @@
+{{- if .Values.mesh.enabled }}
+{{- if ne .Values.mesh.provider "istio" }}
+{{- fail "mesh.provider must be istio when mesh.enabled is true" }}
+{{- end }}
+{{- $trustDomain := required "mesh.trustDomain is required when mesh.enabled is true" .Values.mesh.trustDomain }}
+{{- $nginxPrincipals := required "mesh.nginxIngressPrincipals is required when mesh.enabled is true" .Values.mesh.nginxIngressPrincipals }}
+{{- $adminPrincipals := required "mesh.adminIngressPrincipals is required when mesh.enabled is true" .Values.mesh.adminIngressPrincipals }}
+{{- if or (eq (len $nginxPrincipals) 0) (eq (len $adminPrincipals) 0) }}
+{{- fail "mesh ingress principal lists must not be empty when mesh.enabled is true" }}
+{{- end }}
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "un1c0.fullname" . }}-admin-mtls
+  labels:
+    {{- include "un1c0.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "un1c0.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: admin
+  mtls:
+    mode: {{ required "mesh.mtlsMode is required when mesh.enabled is true" .Values.mesh.mtlsMode }}
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "un1c0.fullname" . }}-nginx-mtls
+  labels:
+    {{- include "un1c0.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "un1c0.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: nginx
+  mtls:
+    mode: {{ .Values.mesh.mtlsMode }}
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "un1c0.fullname" . }}-admin-allowlist
+  labels:
+    {{- include "un1c0.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "un1c0.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: admin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+{{ toYaml $adminPrincipals | nindent 14 }}
+      to:
+        - operation:
+            ports: ["5000"]
+            methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "un1c0.fullname" . }}-nginx-allowlist
+  labels:
+    {{- include "un1c0.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "un1c0.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: nginx
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+{{ toYaml $nginxPrincipals | nindent 14 }}
+      to:
+        - operation:
+            ports: ["8443"]
+            methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+{{- end }}

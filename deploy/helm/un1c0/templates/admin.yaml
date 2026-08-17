@@ -41,8 +41,11 @@ spec:
       labels:
         {{- include "un1c0.labels" . | nindent 8 }}
         app.kubernetes.io/component: admin
+        {{- if .Values.mesh.enabled }}
+        sidecar.istio.io/inject: "true"
+        {{- end }}
     spec:
-      serviceAccountName: {{ include "un1c0.serviceAccountName" . }}
+      serviceAccountName: {{ include "un1c0.adminServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.admin.podSecurityContext | nindent 8 }}

@@ -52,5 +52,37 @@ grep -q 'NetworkPolicy' "${RENDERED}"
 grep -q 'PodDisruptionBudget' "${RENDERED}"
 grep -q 'ghcr.io/oxcryptobot/un1c0/admin-service@sha256:' "${RENDERED}"
 grep -q 'nginx@sha256:' "${RENDERED}"
+grep -q 'kind: PeerAuthentication' "${RENDERED}"
+grep -q 'mode: STRICT' "${RENDERED}"
+grep -q 'kind: AuthorizationPolicy' "${RENDERED}"
+grep -q 'cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account' "${RENDERED}"
+grep -q 'cluster.local/ns/un1c0-staging/sa/un1c0-staging-un1c0-nginx' "${RENDERED}"
+grep -q 'name: un1c0-staging-un1c0-admin' "${RENDERED}"
+grep -q 'name: un1c0-staging-un1c0-nginx' "${RENDERED}"
 
-printf '%s\n' 'Helm security validation passed: fail-closed values, immutable images, non-root/read-only pods, probes, mTLS, policies, and disruption budgets.'
+MESH_INVALID_VALUES=$(mktemp)
+trap 'rm -f "${RENDERED}" "${ERROR_LOG}" "${MESH_INVALID_VALUES}"' EXIT
+cat >"${MESH_INVALID_VALUES}" <<'EOF'
+mesh:
+  enabled: true
+  provider: istio
+  trustDomain: ""
+  mtlsMode: STRICT
+  nginxIngressPrincipals: []
+  adminIngressPrincipals: []
+EOF
+if helm template un1c0-staging "${CHART_DIR}" -n un1c0-staging -f "${VALUES_FILE}" -f "${MESH_INVALID_VALUES}" \
+  --set "admin.image.digest=${DIGEST}" \
+  --set "nginx.image.digest=${DIGEST}" \
+  --set networkPolicy.externalVaultCidr=10.0.0.0/8 \
+  --set networkPolicy.nginxIngressCidr=10.0.0.0/8 >"${RENDERED}" 2>"${ERROR_LOG}"; then
+  echo "mesh-enabled chart unexpectedly rendered without trust-domain and principals" >&2
+  exit 1
+fi
+grep -Eq 'mesh\.(trustDomain|nginxIngressPrincipals|adminIngressPrincipals)' "${ERROR_LOG}" || {
+  echo "mesh-enabled failure did not identify the missing zero-trust inputs" >&2
+  cat "${ERROR_LOG}" >&2
+  exit 1
+}
+
+printf '%s\n' 'Helm security validation passed: fail-closed values, immutable images, non-root/read-only pods, probes, mTLS, strict mesh authorization, policies, and disruption budgets.'

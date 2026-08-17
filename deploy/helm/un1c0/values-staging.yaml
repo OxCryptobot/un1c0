@@ -21,3 +21,14 @@ networkPolicy:
 vault:
   enabled: false
   address: "https://vault.example.invalid"
+
+mesh:
+  enabled: true
+  provider: istio
+  trustDomain: cluster.local
+  controlPlaneNamespace: istio-system
+  mtlsMode: STRICT
+  nginxIngressPrincipals:
+    - cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account
+  adminIngressPrincipals:
+    - cluster.local/ns/un1c0-staging/sa/un1c0-staging-un1c0-nginx

@@ -79,6 +79,17 @@ serviceAccount:
   automountServiceAccountToken: false
   annotations: {}
   name: ""
+  adminName: ""
+  nginxName: ""
+
+mesh:
+  enabled: false
+  provider: istio
+  trustDomain: ""
+  controlPlaneNamespace: istio-system
+  mtlsMode: STRICT
+  nginxIngressPrincipals: []
+  adminIngressPrincipals: []
 
 networkPolicy:
   enabled: true

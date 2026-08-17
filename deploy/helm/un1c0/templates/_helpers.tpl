@@ -17,11 +17,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end }}
 
-{{- define "un1c0.serviceAccountName" -}}
+{{- define "un1c0.adminServiceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "un1c0.fullname" .) .Values.serviceAccount.name }}
+{{- default (printf "%s-admin" (include "un1c0.fullname" .)) (default .Values.serviceAccount.name .Values.serviceAccount.adminName) }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- default "default" (default .Values.serviceAccount.name .Values.serviceAccount.adminName) }}
+{{- end }}
+{{- end }}
+
+{{- define "un1c0.nginxServiceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (printf "%s-nginx" (include "un1c0.fullname" .)) (default .Values.serviceAccount.name .Values.serviceAccount.nginxName) }}
+{{- else }}
+{{- default "default" (default .Values.serviceAccount.name .Values.serviceAccount.nginxName) }}
 {{- end }}
 {{- end }}
 
