@@ -9,12 +9,17 @@ use crate::agentic::EvolutionProposal;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+
+const MAX_CANARY_CHECKS: usize = 64;
+const MAX_CHANGED_FILES: usize = 2_000;
+const MAX_EVIDENCE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_CHANGED_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum EvolutionError {
@@ -22,6 +27,8 @@ pub enum EvolutionError {
     InvalidProposal(String),
     #[error("evolution signature verification failed")]
     InvalidSignature,
+    #[error("evolution signer is not trusted: {0}")]
+    UntrustedSigner(String),
     #[error("evolution state conflict: {0}")]
     StateConflict(String),
     #[error("evolution persistence error: {0}")]
@@ -71,9 +78,15 @@ impl EvaluationCheck {
         stderr: &str,
         duration_ms: u64,
     ) -> Result<Self, EvolutionError> {
-        if name.trim().is_empty() || name.len() > 256 {
+        validate_identifier(name, "evaluation check name")?;
+        if stdout.len() > MAX_EVIDENCE_OUTPUT_BYTES || stderr.len() > MAX_EVIDENCE_OUTPUT_BYTES {
             return Err(EvolutionError::InvalidProposal(
-                "evaluation check name must be between 1 and 256 bytes".into(),
+                "evaluation output exceeds the 16 MiB evidence bound".into(),
+            ));
+        }
+        if passed != (exit_code == Some(0)) {
+            return Err(EvolutionError::InvalidProposal(
+                "evaluation pass state must agree with a zero exit code".into(),
             ));
         }
         Ok(Self {
@@ -100,15 +113,19 @@ impl CanaryReport {
         checks: Vec<EvaluationCheck>,
         changed_files: BTreeMap<String, String>,
     ) -> Result<Self, EvolutionError> {
-        if run_id.trim().is_empty() || run_id.len() > 256 || checks.is_empty() || checks.len() > 64 {
+        validate_identifier(run_id, "canary run id")?;
+        if checks.is_empty() || checks.len() > MAX_CANARY_CHECKS {
             return Err(EvolutionError::InvalidProposal(
                 "canary report requires a run id of 1 to 256 bytes and 1 to 64 checks".into(),
             ));
         }
-        if changed_files.len() > 2_000 {
+        if changed_files.len() > MAX_CHANGED_FILES {
             return Err(EvolutionError::InvalidProposal(
                 "canary report cannot contain more than 2000 changed files".into(),
             ));
+        }
+        for check in &checks {
+            validate_check(check)?;
         }
         for (path, digest) in &changed_files {
             if !valid_relative_path(path) {
@@ -135,10 +152,108 @@ impl CanaryReport {
         !self.checks.is_empty() && self.checks.iter().all(|check| check.passed)
     }
 
+    pub fn from_workspace(
+        root: impl AsRef<Path>,
+        run_id: &str,
+        checks: Vec<EvaluationCheck>,
+        changed_paths: &[String],
+    ) -> Result<Self, EvolutionError> {
+        let root = fs::canonicalize(root.as_ref())
+            .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+        if changed_paths.len() > MAX_CHANGED_FILES {
+            return Err(EvolutionError::InvalidProposal(
+                "canary report cannot contain more than 2000 changed files".into(),
+            ));
+        }
+        let mut changed_files = BTreeMap::new();
+        for path in changed_paths {
+            if !valid_relative_path(path) {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "invalid changed-file path '{}'",
+                    path
+                )));
+            }
+            let candidate = root.join(path);
+            let metadata = fs::symlink_metadata(&candidate)
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "changed-file path '{}' is not a regular file",
+                    path
+                )));
+            }
+            if metadata.len() > MAX_CHANGED_FILE_BYTES {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "changed file '{}' exceeds the 16 MiB evidence bound",
+                    path
+                )));
+            }
+            let canonical = fs::canonicalize(&candidate)
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            if !canonical.starts_with(&root) {
+                return Err(EvolutionError::InvalidProposal(format!(
+                    "changed-file path '{}' escapes the workspace",
+                    path
+                )));
+            }
+            let content = fs::read(&canonical)
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            changed_files.insert(path.clone(), hex_digest(&content));
+        }
+        Self::new(run_id, checks, changed_files)
+    }
+
     pub fn evidence_digest(&self) -> Result<String, EvolutionError> {
         let payload = serde_json::to_vec(self)
             .map_err(|error| EvolutionError::Serialization(error.to_string()))?;
         Ok(hex_digest(&payload))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TrustedSignerStore {
+    keys: BTreeMap<String, [u8; 32]>,
+}
+
+impl TrustedSignerStore {
+    pub fn trust_public_key(
+        &mut self,
+        signer_id: &str,
+        public_key: &[u8],
+    ) -> Result<(), EvolutionError> {
+        validate_identifier(signer_id, "signer id")?;
+        let key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| EvolutionError::InvalidSignature)?;
+        if let Some(existing) = self.keys.get(signer_id) {
+            if existing != &key {
+                return Err(EvolutionError::StateConflict(format!(
+                    "trusted signer '{}' cannot be rebound without explicit revocation",
+                    signer_id
+                )));
+            }
+        } else {
+            self.keys.insert(signer_id.to_string(), key);
+        }
+        Ok(())
+    }
+
+    pub fn revoke(&mut self, signer_id: &str) -> bool {
+        self.keys.remove(signer_id).is_some()
+    }
+
+    fn authorize(&self, signed: &SignedEvolutionProposal) -> Result<(), EvolutionError> {
+        let trusted = self
+            .keys
+            .get(&signed.signer_id)
+            .ok_or_else(|| EvolutionError::UntrustedSigner(signed.signer_id.clone()))?;
+        if trusted.as_slice() != signed.public_key.as_slice() {
+            return Err(EvolutionError::UntrustedSigner(format!(
+                "public key mismatch for '{}'",
+                signed.signer_id
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -156,9 +271,7 @@ impl SignedEvolutionProposal {
         signer_id: &str,
         signing_key: &SigningKey,
     ) -> Result<Self, EvolutionError> {
-        if signer_id.trim().is_empty() {
-            return Err(EvolutionError::InvalidProposal("signer id is empty".into()));
-        }
+        validate_identifier(signer_id, "signer id")?;
         if proposal.approved {
             return Err(EvolutionError::InvalidProposal(
                 "proposal must be unapproved before signing".into(),
@@ -176,9 +289,7 @@ impl SignedEvolutionProposal {
     }
 
     pub fn verify(&self) -> Result<(), EvolutionError> {
-        if self.signer_id.trim().is_empty() {
-            return Err(EvolutionError::InvalidProposal("signer id is empty".into()));
-        }
+        validate_identifier(&self.signer_id, "signer id")?;
         let expected_hash = proposal_content_hash(&self.proposal)?;
         if expected_hash != self.proposal.content_hash {
             return Err(EvolutionError::InvalidProposal(
@@ -209,6 +320,14 @@ impl SignedEvolutionProposal {
             .verify(&payload, &signature)
             .map_err(|_| EvolutionError::InvalidSignature)
     }
+
+    pub fn verify_with_trust(
+        &self,
+        trusted_signers: &TrustedSignerStore,
+    ) -> Result<(), EvolutionError> {
+        self.verify()?;
+        trusted_signers.authorize(self)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,10 +340,18 @@ pub struct ProposalRecord {
 pub struct EvolutionLedger {
     path: PathBuf,
     records: Arc<Mutex<BTreeMap<String, ProposalRecord>>>,
+    trusted_signers: TrustedSignerStore,
 }
 
 impl EvolutionLedger {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EvolutionError> {
+        Self::open_with_trusted_signers(path, TrustedSignerStore::default())
+    }
+
+    pub fn open_with_trusted_signers(
+        path: impl AsRef<Path>,
+        trusted_signers: TrustedSignerStore,
+    ) -> Result<Self, EvolutionError> {
         let path = path.as_ref().to_path_buf();
         let records: BTreeMap<String, ProposalRecord> = if path.exists() {
             let content = fs::read_to_string(&path)
@@ -240,11 +367,13 @@ impl EvolutionLedger {
                     "ledger key does not match proposal id".into(),
                 ));
             }
+            record.signed.verify_with_trust(&trusted_signers)?;
             validate_record(record)?;
         }
         Ok(Self {
             path,
             records: Arc::new(Mutex::new(records)),
+            trusted_signers,
         })
     }
 
@@ -253,7 +382,7 @@ impl EvolutionLedger {
     }
 
     pub fn propose(&self, signed: SignedEvolutionProposal) -> Result<String, EvolutionError> {
-        signed.verify()?;
+        signed.verify_with_trust(&self.trusted_signers)?;
         let id = signed.proposal.id.clone();
         let mut records = self.lock_records()?;
         if records.contains_key(&id) {
@@ -339,55 +468,23 @@ impl EvolutionLedger {
                     report.run_id, run_id
                 )))
             }
-            ProposalState::Canary { .. } if report.passed() => {
-                record.state = ProposalState::Applied {
-                    evidence,
-                    completed_at_ms: now_ms(),
-                };
-                Ok(())
-            }
             ProposalState::Canary { .. } => {
-                record.state = ProposalState::RolledBack {
-                    reason: evidence,
-                    completed_at_ms: now_ms(),
-                };
+                validate_report_against_proposal(&record.signed.proposal, &report)?;
+                if report.passed() {
+                    record.state = ProposalState::Applied {
+                        evidence,
+                        completed_at_ms: now_ms(),
+                    };
+                } else {
+                    record.state = ProposalState::RolledBack {
+                        reason: evidence,
+                        completed_at_ms: now_ms(),
+                    };
+                }
                 Ok(())
             }
             ref state => Err(EvolutionError::StateConflict(format!(
                 "cannot finalize canary report from state {:?}",
-                state
-            ))),
-        })
-    }
-
-    pub fn finalize_canary(
-        &self,
-        id: &str,
-        passed: bool,
-        evidence: &str,
-    ) -> Result<(), EvolutionError> {
-        if evidence.trim().is_empty() {
-            return Err(EvolutionError::InvalidProposal(
-                "canary evidence is empty".into(),
-            ));
-        }
-        self.transition(id, |record| match record.state {
-            ProposalState::Canary { .. } if passed => {
-                record.state = ProposalState::Applied {
-                    evidence: evidence.to_string(),
-                    completed_at_ms: now_ms(),
-                };
-                Ok(())
-            }
-            ProposalState::Canary { .. } => {
-                record.state = ProposalState::RolledBack {
-                    reason: evidence.to_string(),
-                    completed_at_ms: now_ms(),
-                };
-                Ok(())
-            }
-            ref state => Err(EvolutionError::StateConflict(format!(
-                "cannot finalize canary from state {:?}",
                 state
             ))),
         })
@@ -429,6 +526,7 @@ impl EvolutionLedger {
                 EvolutionError::StateConflict(format!("proposal '{}' does not exist", id))
             })?;
             transition(record)?;
+            record.signed.verify_with_trust(&self.trusted_signers)?;
             validate_record(record)
         })();
         if let Err(error) = transition_result {
@@ -475,6 +573,7 @@ impl EvolutionLedger {
 
 fn validate_record(record: &ProposalRecord) -> Result<(), EvolutionError> {
     record.signed.verify()?;
+    validate_identifier(&record.signed.signer_id, "signer id")?;
     match record.state {
         ProposalState::Draft if record.signed.proposal.approved => Err(
             EvolutionError::InvalidProposal("draft proposal cannot be marked approved".into()),
@@ -484,11 +583,53 @@ fn validate_record(record: &ProposalRecord) -> Result<(), EvolutionError> {
         | ProposalState::Canary { .. }
         | ProposalState::Applied { .. }
         | ProposalState::RolledBack { .. }
-            if !record.signed.proposal.approved => Err(EvolutionError::InvalidProposal(
+            if !record.signed.proposal.approved =>
+        {
+            Err(EvolutionError::InvalidProposal(
                 "non-draft proposal must be marked approved".into(),
-            )),
+            ))
+        }
         _ => Ok(()),
     }
+}
+
+fn validate_report_against_proposal(
+    proposal: &EvolutionProposal,
+    report: &CanaryReport,
+) -> Result<(), EvolutionError> {
+    let expected: BTreeSet<&str> = proposal.files.keys().map(String::as_str).collect();
+    let actual: BTreeSet<&str> = report.changed_files.keys().map(String::as_str).collect();
+    if expected != actual {
+        return Err(EvolutionError::InvalidProposal(
+            "canary changed-file set does not match the evolution proposal".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_identifier(value: &str, field: &str) -> Result<(), EvolutionError> {
+    if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        return Err(EvolutionError::InvalidProposal(format!(
+            "{} must be 1 to 256 bytes and contain no control characters",
+            field
+        )));
+    }
+    Ok(())
+}
+
+fn validate_check(check: &EvaluationCheck) -> Result<(), EvolutionError> {
+    validate_identifier(&check.name, "evaluation check name")?;
+    if check.passed != (check.exit_code == Some(0)) {
+        return Err(EvolutionError::InvalidProposal(
+            "evaluation pass state must agree with a zero exit code".into(),
+        ));
+    }
+    if !is_hex_digest(&check.stdout_digest) || !is_hex_digest(&check.stderr_digest) {
+        return Err(EvolutionError::InvalidProposal(
+            "evaluation output digests must be 64-character hexadecimal values".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn valid_relative_path(path: &str) -> bool {
@@ -498,7 +639,10 @@ fn valid_relative_path(path: &str) -> bool {
     let path = Path::new(path);
     !path.is_absolute()
         && path.components().all(|component| {
-            !matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            !matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
         })
 }
 
@@ -556,6 +700,7 @@ fn now_ms() -> u128 {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::fs;
     use tempfile::tempdir;
 
     fn signed_proposal() -> SignedEvolutionProposal {
@@ -563,6 +708,27 @@ mod tests {
         let proposal = EvolutionProposal::new("new skill", files, "cargo test", "medium").unwrap();
         let key = SigningKey::from_bytes(&[7u8; 32]);
         SignedEvolutionProposal::sign(proposal, "operator:local", &key).unwrap()
+    }
+
+    fn trusted_signers() -> TrustedSignerStore {
+        let signed = signed_proposal();
+        let mut trusted = TrustedSignerStore::default();
+        trusted
+            .trust_public_key(&signed.signer_id, &signed.public_key)
+            .unwrap();
+        trusted
+    }
+
+    fn open_ledger(path: impl AsRef<Path>) -> EvolutionLedger {
+        EvolutionLedger::open_with_trusted_signers(path, trusted_signers()).unwrap()
+    }
+
+    fn report_for_run(root: &Path, run_id: &str, check: EvaluationCheck) -> CanaryReport {
+        let file = root.join("skills/new.md");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, "content").unwrap();
+        CanaryReport::from_workspace(root, run_id, vec![check], &[String::from("skills/new.md")])
+            .unwrap()
     }
 
     #[test]
@@ -584,6 +750,43 @@ mod tests {
     }
 
     #[test]
+    fn unknown_or_mismatched_signers_are_rejected() {
+        let dir = tempdir().unwrap();
+        let signed = signed_proposal();
+        let unknown = EvolutionLedger::open(dir.path().join("unknown.json")).unwrap();
+        assert!(matches!(
+            unknown.propose(signed.clone()),
+            Err(EvolutionError::UntrustedSigner(_))
+        ));
+
+        let mut wrong_key = TrustedSignerStore::default();
+        wrong_key
+            .trust_public_key(&signed.signer_id, &[9u8; 32])
+            .unwrap();
+        let mismatched = EvolutionLedger::open_with_trusted_signers(
+            dir.path().join("mismatched.json"),
+            wrong_key,
+        )
+        .unwrap();
+        assert!(matches!(
+            mismatched.propose(signed),
+            Err(EvolutionError::UntrustedSigner(_))
+        ));
+    }
+
+    #[test]
+    fn contradictory_checks_and_workspace_escapes_are_rejected() {
+        assert!(matches!(
+            EvaluationCheck::from_output("cargo test", true, Some(1), "", "failure", 1),
+            Err(EvolutionError::InvalidProposal(_))
+        ));
+        let dir = tempdir().unwrap();
+        let check = EvaluationCheck::from_output("cargo test", true, Some(0), "ok", "", 1).unwrap();
+        let missing = vec![String::from("missing.txt")];
+        assert!(CanaryReport::from_workspace(dir.path(), "run-1", vec![check], &missing).is_err());
+    }
+
+    #[test]
     fn canary_report_rejects_unsafe_paths_and_malformed_digests() {
         let check = EvaluationCheck::from_output("cargo test", true, Some(0), "ok", "", 1).unwrap();
         let unsafe_path = BTreeMap::from([(String::from("../escape"), "0".repeat(64))]);
@@ -602,7 +805,7 @@ mod tests {
     fn lifecycle_persists_approval_canary_and_apply() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("evolution.json");
-        let ledger = EvolutionLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path);
         let id = ledger.propose(signed_proposal()).unwrap();
         assert!(matches!(
             ledger.get(&id).unwrap().unwrap().state,
@@ -619,13 +822,13 @@ mod tests {
             42,
         )
         .unwrap();
-        let report = CanaryReport::new("run-1", vec![check], BTreeMap::new()).unwrap();
+        let report = report_for_run(dir.path(), "run-1", check);
         ledger.finalize_canary_report(&id, report).unwrap();
         assert!(matches!(
             ledger.get(&id).unwrap().unwrap().state,
             ProposalState::Applied { .. }
         ));
-        let reopened = EvolutionLedger::open(&path).unwrap();
+        let reopened = open_ledger(&path);
         assert!(matches!(
             reopened.get(&id).unwrap().unwrap().state,
             ProposalState::Applied { .. }
@@ -635,25 +838,18 @@ mod tests {
     #[test]
     fn mismatched_or_failed_canary_report_cannot_apply() {
         let dir = tempdir().unwrap();
-        let ledger = EvolutionLedger::open(dir.path().join("evolution.json")).unwrap();
+        let ledger = open_ledger(dir.path().join("evolution.json"));
         let id = ledger.propose(signed_proposal()).unwrap();
         ledger.approve(&id, "reviewer:local").unwrap();
         ledger.start_canary(&id, "run-1").unwrap();
-        let failed = EvaluationCheck::from_output(
-            "cargo test",
-            false,
-            Some(1),
-            "",
-            "failure",
-            10,
-        )
-        .unwrap();
-        let mismatched = CanaryReport::new("run-2", vec![failed.clone()], BTreeMap::new()).unwrap();
+        let failed =
+            EvaluationCheck::from_output("cargo test", false, Some(1), "", "failure", 10).unwrap();
+        let mismatched = report_for_run(dir.path(), "run-2", failed.clone());
         assert!(matches!(
             ledger.finalize_canary_report(&id, mismatched),
             Err(EvolutionError::StateConflict(_))
         ));
-        let report = CanaryReport::new("run-1", vec![failed], BTreeMap::new()).unwrap();
+        let report = report_for_run(dir.path(), "run-1", failed);
         ledger.finalize_canary_report(&id, report).unwrap();
         assert!(matches!(
             ledger.get(&id).unwrap().unwrap().state,
@@ -664,13 +860,22 @@ mod tests {
     #[test]
     fn failed_canary_rolls_back_and_draft_cannot_skip_approval() {
         let dir = tempdir().unwrap();
-        let ledger = EvolutionLedger::open(dir.path().join("evolution.json")).unwrap();
+        let ledger = open_ledger(dir.path().join("evolution.json"));
         let id = ledger.propose(signed_proposal()).unwrap();
         assert!(ledger.start_canary(&id, "run-1").is_err());
         ledger.approve(&id, "reviewer:local").unwrap();
         ledger.start_canary(&id, "run-1").unwrap();
+        let check = EvaluationCheck::from_output(
+            "cargo test",
+            false,
+            Some(1),
+            "",
+            "verification failed",
+            10,
+        )
+        .unwrap();
         ledger
-            .finalize_canary(&id, false, "verification failed")
+            .finalize_canary_report(&id, report_for_run(dir.path(), "run-1", check))
             .unwrap();
         assert!(matches!(
             ledger.get(&id).unwrap().unwrap().state,
