@@ -356,9 +356,9 @@ def metrics_prometheus():
             '# TYPE un1c0_admin_issuance_event_count gauge',
             f"un1c0_admin_issuance_event_count {int(payload.get('issuance_event_count', 0))}",
         ]
-        return Response('\\n'.join(lines) + '\\n', mimetype='text/plain')
+        return Response('\n'.join(lines) + '\n', mimetype='text/plain')
     except Exception:
-        return Response('un1c0_admin_status 0\\n', status=503, mimetype='text/plain')
+        return Response('un1c0_admin_status 0\n', status=503, mimetype='text/plain')
 
 
 @app.route('/issue-job-secret', methods=['POST'])
