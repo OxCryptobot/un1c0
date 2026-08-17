@@ -41,6 +41,10 @@ pub enum AgentError {
     Serialization(String),
     #[error("execution budget exceeded: {0}")]
     BudgetExceeded(String),
+    #[error("integration consent denied: {0}")]
+    ConsentDenied(String),
+    #[error("integration approval required: {0}")]
+    ConsentApprovalRequired(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -53,6 +57,16 @@ pub enum Capability {
     ProcessExec,
     #[serde(rename = "network.access")]
     NetworkAccess,
+    #[serde(rename = "api.access")]
+    ApiAccess,
+    #[serde(rename = "web.access")]
+    WebAccess,
+    #[serde(rename = "mcp.access")]
+    McpAccess,
+    #[serde(rename = "skill.access")]
+    SkillAccess,
+    #[serde(rename = "lsp.access")]
+    LspAccess,
     #[serde(rename = "secret.read")]
     SecretRead,
     #[serde(rename = "evolution.propose")]
@@ -185,6 +199,20 @@ pub struct ToolSpec {
 pub trait Tool: Send + Sync {
     fn spec(&self) -> &ToolSpec;
     fn execute(&self, input: &Value, workspace: &Workspace) -> Result<Value, AgentError>;
+
+    /// Execute with the runtime's explicit approval decision.
+    ///
+    /// Local tools ignore this flag. Consent-scoped external adapters override
+    /// it so an approved plan action can satisfy an integration manifest without
+    /// allowing approval to be smuggled through untrusted tool input.
+    fn execute_with_approval(
+        &self,
+        input: &Value,
+        workspace: &Workspace,
+        _approved: bool,
+    ) -> Result<Value, AgentError> {
+        self.execute(input, workspace)
+    }
 }
 
 pub struct ToolRegistry {
@@ -296,6 +324,11 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::WorkspaceWrite => "workspace.write",
         Capability::ProcessExec => "process.exec",
         Capability::NetworkAccess => "network.access",
+        Capability::ApiAccess => "api.access",
+        Capability::WebAccess => "web.access",
+        Capability::McpAccess => "mcp.access",
+        Capability::SkillAccess => "skill.access",
+        Capability::LspAccess => "lsp.access",
         Capability::SecretRead => "secret.read",
         Capability::EvolutionPropose => "evolution.propose",
     }
@@ -710,6 +743,7 @@ impl Runtime {
                     action.input.clone(),
                     self.workspace.clone(),
                     action.timeout_ms.unwrap_or(tool.spec().default_timeout_ms),
+                    approved,
                 ) {
                     Ok(output) => {
                         let serialized = serde_json::to_vec(&output)
@@ -829,11 +863,12 @@ fn execute_with_timeout(
     input: Value,
     workspace: Workspace,
     timeout_ms: u64,
+    approved: bool,
 ) -> Result<Value, AgentError> {
     let timeout = Duration::from_millis(timeout_ms.max(1));
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = tool.execute(&input, &workspace);
+        let result = tool.execute_with_approval(&input, &workspace, approved);
         let _ = sender.send(result);
     });
     match receiver.recv_timeout(timeout) {

@@ -1,4 +1,6 @@
 pub mod agentic;
+pub mod evolution;
+pub mod integration;
 pub mod provider;
 pub mod provider_openai;
 pub mod repository;
@@ -12,6 +14,8 @@ pub mod walker;
 
 // Re-export selected items for integration tests and consumers.
 pub use agentic::*;
+pub use evolution::*;
+pub use integration::*;
 pub use provider::*;
 pub use provider_openai::*;
 pub use repository::*;

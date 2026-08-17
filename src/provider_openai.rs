@@ -311,6 +311,11 @@ fn capability_name(capability: &Capability) -> String {
         Capability::WorkspaceWrite => "workspace.write",
         Capability::ProcessExec => "process.exec",
         Capability::NetworkAccess => "network.access",
+        Capability::ApiAccess => "api.access",
+        Capability::WebAccess => "web.access",
+        Capability::McpAccess => "mcp.access",
+        Capability::SkillAccess => "skill.access",
+        Capability::LspAccess => "lsp.access",
         Capability::SecretRead => "secret.read",
         Capability::EvolutionPropose => "evolution.propose",
     }

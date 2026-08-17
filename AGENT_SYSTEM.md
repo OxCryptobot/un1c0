@@ -52,6 +52,8 @@ Goal / Program
 | `EventJournal` | Append-only run history | Replayable evidence and crash recovery |
 | `MemoryStore` | Bounded session facts with importance and TTL | No unbounded prompt or state growth |
 | `EvolutionProposal` | Candidate tool/skill change with hash and tests | Self-evolution is proposed, validated, and approved—not silently applied |
+| `ConsentManifest` / `ConsentStore` | Versioned MCP, skill, API, web, and LSP grants | External capabilities fail closed until registered, scoped, and approved |
+| `SignedEvolutionProposal` / `EvolutionLedger` | Ed25519-signed proposal lifecycle and durable state | Canary failure rolls back; persistence is atomic and auditable |
 
 ## Execution semantics
 
@@ -63,6 +65,8 @@ Goal / Program
 6. Shell execution is not enabled by default. It requires the `process.exec` capability and an explicit policy approval. The first implementation provides a controlled command runner for allowlisted commands only.
 7. Memory is explicit and bounded. Entries have a scope, importance, creation time, and optional TTL. Retrieval is deterministic and records the reason for selection.
 8. Evolution is a first-class record. A proposal includes a content hash, changed files, test command, and risk class. The runtime can validate and journal a proposal but cannot auto-apply it without explicit approval.
+9. External adapters require a registered `ConsentManifest`. The manifest binds an integration kind, allowed tool names, exact capabilities, payload limits, optional network hosts, and whether approval is mandatory. Revocation removes future authority immediately.
+10. Controlled evolution requires an Ed25519 signature over the immutable proposal content and signer identity. The `EvolutionLedger` permits only `draft -> approved -> canary -> applied|rolled_back` transitions and records evidence for every terminal state.
 
 ## Provider and planner boundary
 
@@ -77,8 +81,8 @@ The kernel does not embed a particular model provider. A future provider adapter
 | 3 | Repository index, symbol graph, UEG-aware context retrieval | Phase 1 |
 | 4 | Verification loop: tests, diffs, compiler diagnostics, repair plans | Phases 1–3 |
 | 5 | Parallel subagents with isolated workspaces and merge gates | Phases 1–4 |
-| 6 | MCP/skill adapters with explicit consent and capability manifests | Phases 1–5 |
-| 7 | Controlled evolution service with signed proposals and regression evaluation | Phases 1–6 |
+| 6 | MCP/skill adapters with explicit consent and capability manifests | Phases 1–5; implemented in `integration.rs` |
+| 7 | Controlled evolution service with signed proposals and regression evaluation | Phases 1–6; lifecycle ledger implemented in `evolution.rs` |
 
 ## Non-goals of the first implementation
 
@@ -87,3 +91,5 @@ The first kernel does not claim to provide unrestricted self-learning, autonomou
 ## Batch implementation extensions
 
 The kernel now includes three additional production seams. `RepositoryIndex` performs deterministic, bounded local indexing of supported source and documentation files, extracts lightweight symbols, hashes files, skips ignored directories and symlinks, and converts ranked matches into bounded provider context items. `CheckpointStore` persists plan-hashed successful action results atomically; `Runtime` can resume from a matching checkpoint, skip completed actions, journal checkpoint saves, and clear the checkpoint only after successful completion. `SubagentCoordinator` schedules isolated workspaces with a bounded parallelism limit, while `MergeGate` requires successful verification and rejects overlapping changed files before integration.
+
+The current batch adds consent-scoped integration adapters for MCP, skills, APIs, web access, and LSP tooling. `ConsentScopedTool` is the common execution boundary; aliases provide protocol-specific naming without weakening the shared manifest, payload, revocation, or approval checks. It also adds `SignedEvolutionProposal` and `EvolutionLedger`, which bind Ed25519 signatures to the proposal hash and enforce approval, canary, apply, and rollback transitions through an atomic JSON ledger.
