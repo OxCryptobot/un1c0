@@ -10,7 +10,8 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -560,14 +561,31 @@ impl EvolutionLedger {
         }
         let content = serde_json::to_vec_pretty(records)
             .map_err(|error| EvolutionError::Serialization(error.to_string()))?;
-        let stamp = now_ms();
+        let stamp = format!("{}-{}", now_ms(), std::process::id());
         let temp = self.path.with_extension(format!("json.tmp-{}", stamp));
-        fs::write(&temp, content)
-            .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
-        fs::rename(&temp, &self.path).map_err(|error| {
+        let result = (|| {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            file.write_all(&content)
+                .and_then(|_| file.sync_all())
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            drop(file);
+            fs::rename(&temp, &self.path)
+                .map_err(|error| EvolutionError::Persistence(error.to_string()))?;
+            if let Some(parent) = self.path.parent() {
+                if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+                    let _ = directory.sync_all();
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
             let _ = fs::remove_file(&temp);
-            EvolutionError::Persistence(error.to_string())
-        })
+        }
+        result
     }
 }
 

@@ -123,6 +123,36 @@ fn signed_proposal_persists_through_applied_canary_lifecycle() {
 }
 
 #[test]
+fn failed_atomic_persist_restores_state_and_cleans_temp_file() {
+    let directory = tempdir().expect("temporary ledger directory");
+    let path = directory.path().join("evolution.json");
+    let signed = signed_proposal();
+    let ledger = EvolutionLedger::open_with_trusted_signers(&path, trusted_signers(&signed))
+        .expect("open trusted ledger");
+    let id = ledger.propose(signed).expect("proposal accepted");
+    fs::remove_file(&path).expect("remove persisted ledger");
+    fs::create_dir(&path).expect("block atomic rename with a directory");
+
+    assert!(matches!(
+        ledger.approve(&id, "reviewer:integration"),
+        Err(EvolutionError::Persistence(_))
+    ));
+    assert!(matches!(
+        ledger.get(&id).unwrap().unwrap().state,
+        ProposalState::Draft
+    ));
+    assert!(directory
+        .path()
+        .read_dir()
+        .unwrap()
+        .filter_map(Result::ok)
+        .all(|entry| !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("evolution.json.tmp-")));
+}
+
+#[test]
 fn failed_canary_is_persisted_as_rollback() {
     let directory = tempdir().expect("temporary workspace");
     write_changed_file(directory.path());

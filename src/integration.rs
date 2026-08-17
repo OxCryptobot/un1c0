@@ -313,6 +313,92 @@ impl Tool for ConsentScopedTool {
     }
 }
 
+/// Routes trusted MCP method envelopes to consent-scoped tool handlers.
+///
+/// The method name is used only for a registry lookup; all actual authorization
+/// is repeated by the selected tool against the current ConsentStore on every
+/// dispatch. This makes revocation effective without rebuilding the router.
+#[derive(Clone, Default)]
+pub struct McpToolRouter {
+    tools: Arc<RwLock<BTreeMap<String, Arc<ConsentScopedTool>>>>,
+}
+
+impl McpToolRouter {
+    pub fn register(&self, method: &str, tool: ConsentScopedTool) -> Result<(), AgentError> {
+        validate_mcp_method(method)?;
+        if !tool.spec.capabilities.contains(&Capability::McpAccess) {
+            return Err(AgentError::Input(format!(
+                "MCP tool '{}' must declare mcp.access",
+                tool.spec.name
+            )));
+        }
+        let manifest = tool.store.get(&tool.manifest_id)?;
+        if manifest.kind != IntegrationKind::Mcp {
+            return Err(AgentError::ConsentDenied(format!(
+                "manifest '{}' is not an MCP manifest",
+                tool.manifest_id
+            )));
+        }
+        if !manifest.allowed_tools.contains(&tool.spec.name)
+            || !manifest.capabilities.is_superset(&tool.spec.capabilities)
+        {
+            return Err(AgentError::ConsentDenied(format!(
+                "manifest '{}' does not grant MCP tool '{}'",
+                tool.manifest_id, tool.spec.name
+            )));
+        }
+        let mut tools = self
+            .tools
+            .write()
+            .map_err(|_| AgentError::ConsentDenied("MCP router lock poisoned".into()))?;
+        if tools.contains_key(method) {
+            return Err(AgentError::Input(format!(
+                "MCP method '{}' is already registered",
+                method
+            )));
+        }
+        tools.insert(method.to_string(), Arc::new(tool));
+        Ok(())
+    }
+
+    pub fn dispatch(
+        &self,
+        method: &str,
+        arguments: &Value,
+        workspace: &Workspace,
+        approved: bool,
+    ) -> Result<Value, AgentError> {
+        validate_mcp_method(method)?;
+        let tool = self
+            .tools
+            .read()
+            .map_err(|_| AgentError::ConsentDenied("MCP router lock poisoned".into()))?
+            .get(method)
+            .cloned()
+            .ok_or_else(|| {
+                AgentError::ConsentDenied(format!("MCP method '{}' is not registered", method))
+            })?;
+        tool.execute_with_approval(arguments, workspace, approved)
+    }
+
+    pub fn methods(&self) -> Result<Vec<String>, AgentError> {
+        let tools = self
+            .tools
+            .read()
+            .map_err(|_| AgentError::ConsentDenied("MCP router lock poisoned".into()))?;
+        Ok(tools.keys().cloned().collect())
+    }
+}
+
+fn validate_mcp_method(method: &str) -> Result<(), AgentError> {
+    if method.trim().is_empty() || method.chars().any(char::is_control) {
+        return Err(AgentError::Input(
+            "MCP method must be non-empty and contain no control characters".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// LSP request kinds that may read a bounded source snapshot from the workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LspRequestKind {
@@ -564,6 +650,130 @@ mod tests {
         tool.execute(&json!({"host":"api.example.test"}), &workspace)
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mcp_router_routes_registered_methods_and_rechecks_consent() {
+        let store = ConsentStore::default();
+        store
+            .register(
+                ConsentManifest::new(
+                    "mcp.local.echo",
+                    "1.0.0",
+                    IntegrationKind::Mcp,
+                    "Local MCP echo server",
+                    [Capability::NetworkAccess, Capability::McpAccess]
+                        .into_iter()
+                        .collect(),
+                    ["mcp_echo".to_string()].into_iter().collect(),
+                    true,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool = ConsentScopedTool::new(
+            ToolSpec {
+                name: "mcp_echo".into(),
+                description: "Echo MCP arguments".into(),
+                capabilities: [Capability::NetworkAccess, Capability::McpAccess]
+                    .into_iter()
+                    .collect(),
+                input_schema: json!({"type":"object"}),
+                default_timeout_ms: 1_000,
+            },
+            "mcp.local.echo",
+            store.clone(),
+            {
+                let calls = Arc::clone(&calls);
+                move |input| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({"echo": input}))
+                }
+            },
+        )
+        .unwrap();
+        let router = McpToolRouter::default();
+        router.register("tools/echo", tool).unwrap();
+        assert_eq!(router.methods().unwrap(), vec!["tools/echo"]);
+        let workspace = Workspace::new(tempdir().unwrap().path()).unwrap();
+        let arguments = json!({"message":"hello"});
+
+        assert!(matches!(
+            router.dispatch("tools/echo", &arguments, &workspace, false),
+            Err(AgentError::ConsentApprovalRequired(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let output = router
+            .dispatch("tools/echo", &arguments, &workspace, true)
+            .unwrap();
+        assert_eq!(output["echo"]["message"], "hello");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            router.dispatch("tools/missing", &arguments, &workspace, true),
+            Err(AgentError::ConsentDenied(_))
+        ));
+
+        store.revoke("mcp.local.echo").unwrap();
+        assert!(matches!(
+            router.dispatch("tools/echo", &arguments, &workspace, true),
+            Err(AgentError::ConsentDenied(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mcp_router_rejects_non_mcp_manifests_and_invalid_methods() {
+        let store = ConsentStore::default();
+        store
+            .register(
+                ConsentManifest::new(
+                    "api.local.echo",
+                    "1.0.0",
+                    IntegrationKind::Api,
+                    "API manifest cannot back an MCP route",
+                    [Capability::NetworkAccess, Capability::ApiAccess]
+                        .into_iter()
+                        .collect(),
+                    ["api_echo".to_string()].into_iter().collect(),
+                    false,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let tool = ConsentScopedTool::new(
+            ToolSpec {
+                name: "api_echo".into(),
+                description: "API echo".into(),
+                capabilities: [
+                    Capability::NetworkAccess,
+                    Capability::ApiAccess,
+                    Capability::McpAccess,
+                ]
+                .into_iter()
+                .collect(),
+                input_schema: json!({"type":"object"}),
+                default_timeout_ms: 1_000,
+            },
+            "api.local.echo",
+            store,
+            |_| Ok(json!({"ok": true})),
+        )
+        .unwrap();
+        let router = McpToolRouter::default();
+        assert!(matches!(
+            router.register("tools/api", tool),
+            Err(AgentError::ConsentDenied(_))
+        ));
+        assert!(matches!(
+            router.methods(),
+            Ok(methods) if methods.is_empty()
+        ));
+        let workspace = Workspace::new(tempdir().unwrap().path()).unwrap();
+        assert!(matches!(
+            router.dispatch("tools/\ninvalid", &json!({}), &workspace, true),
+            Err(AgentError::Input(_))
+        ));
     }
 
     #[test]
