@@ -2,7 +2,7 @@
 
 **Review scope:** local-first AI-programmable agentic language system, architecture hardening, controlled performance benchmark, and staging deployment readiness.
 
-**Evidence baseline:** repository commit `69ffdf8` plus the benchmark, architecture-documentation, and Helm-chart changes in the current working tree. Measurements were produced by `src/bin/un1c0-bench.rs` using deterministic local fixtures and a local provider mock. No live provider, external API, or Kubernetes cluster was contacted.
+**Evidence baseline:** published repository commit `54c1fec`. Measurements were produced by `src/bin/un1c0-bench.rs` using deterministic local fixtures and a local provider mock. No live provider, external API, or Kubernetes cluster was contacted.
 
 ## Executive assessment
 
@@ -10,7 +10,7 @@ un1c0 has advanced from a source-to-source translator into a credible local-firs
 
 The current benchmark shows that in-process validation and cryptographic checks are inexpensive, while repository retrieval is the dominant measured hotspot and becomes tail-latency sensitive under concurrent filesystem reads. Provider routing remains fast with a local mock but develops a larger p95 tail at concurrency eight, so real provider latency, queueing, and rate limits must be measured separately before capacity commitments. These are directional sandbox results, not production SLOs.
 
-Staging deployment is **prepared but safely gated**. The repository had no Helm chart, no `kubectl` or `helm` executable, and no configured Kubernetes context at inspection time. A hardened chart and explicit `values-staging.yaml` are now present, but no cluster mutation was attempted. The next deployment gate requires an authorized staging context, a namespace, immutable image digests, externally managed runtime and mTLS secrets, and explicit approval for a mutating Helm command.
+Staging deployment is **prepared but safely gated**. The repository initially had no Helm chart, no `kubectl` executable, and no configured Kubernetes context. A hardened chart and explicit `values-staging.yaml` are now present; Helm 3.17.3 was installed locally with checksum verification for linting and client-side rendering only. No cluster mutation was attempted. The next deployment gate requires an authorized staging context, a namespace, immutable image digests, externally managed runtime and mTLS secrets, and explicit approval for a mutating Helm command.
 
 ## Verified architecture status
 
@@ -54,7 +54,7 @@ The benchmark harness records nanoseconds to avoid reporting sub-microsecond ope
 
 The prepared chart is under `deploy/helm/un1c0`. It uses an external Vault address, an existing secret for `VAULT_TOKEN` and `ADMIN_API_KEY`, an existing mTLS secret containing `server.crt`, `server.key`, and `ca.crt`, non-root/read-only containers, probes, resource budgets, PodDisruptionBudgets, and NetworkPolicies. `values-staging.yaml` deliberately contains a placeholder image digest and an example Vault address; it must not be deployed unchanged.
 
-At the time of inspection, the sandbox reported no `kubectl`, no `helm`, no current Kubernetes context, and no context list. Therefore, the deployment was not attempted. Once the user supplies or connects an authorized staging target, the required sequence is chart lint/template, server-side dry run, explicit approval, bounded rollout, mTLS/health/readiness/metrics probes, and end-to-end fixture verification.
+At the time of target discovery, the sandbox reported no `kubectl`, no current Kubernetes context, and no context list. Helm was later installed locally with checksum verification and used for client-side lint/template validation; no Kubernetes API was contacted. Therefore, the deployment was not attempted. Once the user supplies or connects an authorized staging target, the required sequence is chart lint/template, server-side dry run, explicit approval, bounded rollout, mTLS/health/readiness/metrics probes, and end-to-end fixture verification.
 
 ## Evidence artifacts
 
