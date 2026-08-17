@@ -1,4 +1,5 @@
 pub mod agentic;
+pub mod consensus;
 pub mod evolution;
 pub mod integration;
 pub mod provider;
@@ -14,6 +15,7 @@ pub mod walker;
 
 // Re-export selected items for integration tests and consumers.
 pub use agentic::*;
+pub use consensus::*;
 pub use evolution::*;
 pub use integration::*;
 pub use provider::*;
