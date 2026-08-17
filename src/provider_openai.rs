@@ -126,6 +126,11 @@ impl OpenAiCompatibleProvider {
             Capability::WorkspaceWrite,
             Capability::ProcessExec,
             Capability::NetworkAccess,
+            Capability::ApiAccess,
+            Capability::WebAccess,
+            Capability::McpAccess,
+            Capability::SkillAccess,
+            Capability::LspAccess,
             Capability::SecretRead,
             Capability::EvolutionPropose,
         ]
@@ -502,6 +507,25 @@ mod tests {
             config.endpoint(),
             "http://localhost:9000/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn advertises_external_planner_capabilities_without_granting_runtime_authority() {
+        let config = OpenAiCompatibleConfig {
+            base_url: "http://127.0.0.1:9000".into(),
+            api_key: None,
+            ..Default::default()
+        };
+        let provider = OpenAiCompatibleProvider::new(config, &built_in_registry()).unwrap();
+        for capability in [
+            Capability::ApiAccess,
+            Capability::WebAccess,
+            Capability::McpAccess,
+            Capability::SkillAccess,
+            Capability::LspAccess,
+        ] {
+            assert!(provider.manifest().capabilities.contains(&capability));
+        }
     }
 
     #[test]

@@ -615,6 +615,18 @@ mod tests {
     }
 
     #[test]
+    fn filters_provider_by_required_external_capability() {
+        let provider = Arc::new(MockProvider::new("no-lsp", 95, vec![Ok(valid_response())]));
+        let router = ProviderRouter::new(vec![provider], RouterConfig::default());
+        let mut request = request();
+        request.required_capabilities.insert(Capability::LspAccess);
+        assert!(matches!(
+            router.complete(&request),
+            Err(RoutingError::NoCompatibleProviders(_))
+        ));
+    }
+
+    #[test]
     fn filters_provider_by_schema_context_and_quality() {
         let provider = Arc::new(MockProvider::new("small", 50, vec![Ok(valid_response())]));
         let router = ProviderRouter::new(vec![provider], RouterConfig::default());
