@@ -89,6 +89,8 @@ def main() -> None:
             "remote_audit_outbox_durability": "passed",
             "log_compaction_safety": "passed",
             "configuration_bound_snapshots": "passed",
+            "durable_compaction_manifests": "passed",
+            "compaction_recovery": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -124,6 +126,14 @@ def main() -> None:
             "configuration_hash_binding": True,
             "invalid_target_no_mutation": True,
             "persistent_compaction_scheduler": "deployment_boundary",
+        },
+        "phase19_durable_compaction": {
+            "manifest_snapshot_hash_binding": True,
+            "fsync_before_atomic_cutover": True,
+            "partial_staging_aborts": True,
+            "prior_snapshot_preserved": True,
+            "recovery_is_idempotent": True,
+            "storage_scheduler": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

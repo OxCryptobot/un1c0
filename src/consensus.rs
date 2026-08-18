@@ -33,6 +33,7 @@ const MAX_REPLICATION_BATCH_BYTES: usize = 512 * 1024;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 const MAX_COMPACTION_DISCARD_ENTRIES: usize = MAX_BATCH_ENTRIES;
 const MAX_RETAINED_LOG_ENTRIES: usize = MAX_LOG_ENTRIES;
+const MAX_COMPACTION_MANIFEST_BYTES: u64 = 128 * 1024;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -104,6 +105,10 @@ pub enum ConsensusError {
     LogCompaction(String),
     #[error("replication requires a snapshot: {0}")]
     SnapshotRequired(String),
+    #[error("invalid compaction manifest: {0}")]
+    InvalidCompactionManifest(String),
+    #[error("compaction persistence failed: {0}")]
+    CompactionPersistence(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1490,6 +1495,445 @@ impl DurableSnapshotStore {
         .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
         snapshot.validate()?;
         Ok(snapshot)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CompactionLifecycle {
+    Staged,
+    Committed,
+    Aborted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionManifest {
+    pub cluster_id: String,
+    pub source_node_id: String,
+    pub term: u64,
+    pub last_included_index: u64,
+    pub last_included_term: u64,
+    pub retained_suffix_start: u64,
+    pub retained_suffix_end: u64,
+    pub snapshot_state_hash: String,
+    pub configuration_hash: String,
+    pub snapshot_sha256: String,
+    pub lifecycle: CompactionLifecycle,
+    pub manifest_hash: String,
+}
+
+impl CompactionManifest {
+    pub fn new(
+        cluster_id: &str,
+        source_node_id: &str,
+        snapshot: &ConfigurationBoundSnapshot,
+        retained_suffix_end: u64,
+    ) -> Result<Self, ConsensusError> {
+        snapshot.validate()?;
+        validate_cluster_id(cluster_id)?;
+        validate_node_id(source_node_id)?;
+        let retained_suffix_start = snapshot.last_included_index.saturating_add(1);
+        if retained_suffix_end < retained_suffix_start.saturating_sub(1) {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "retained suffix end precedes snapshot frontier".into(),
+            ));
+        }
+        let snapshot_bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let mut manifest = Self {
+            cluster_id: cluster_id.to_string(),
+            source_node_id: source_node_id.to_string(),
+            term: snapshot.term,
+            last_included_index: snapshot.last_included_index,
+            last_included_term: snapshot.last_included_term,
+            retained_suffix_start,
+            retained_suffix_end,
+            snapshot_state_hash: snapshot.state_hash.clone(),
+            configuration_hash: snapshot.configuration_hash.clone(),
+            snapshot_sha256: digest_bytes(&snapshot_bytes),
+            lifecycle: CompactionLifecycle::Staged,
+            manifest_hash: String::new(),
+        };
+        manifest.manifest_hash = manifest.content_hash()?;
+        manifest.validate(snapshot)?;
+        Ok(manifest)
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.cluster_id,
+            &self.source_node_id,
+            self.term,
+            self.last_included_index,
+            self.last_included_term,
+            self.retained_suffix_start,
+            self.retained_suffix_end,
+            &self.snapshot_state_hash,
+            &self.configuration_hash,
+            &self.snapshot_sha256,
+            self.lifecycle,
+        ))
+    }
+
+    pub fn validate(&self, snapshot: &ConfigurationBoundSnapshot) -> Result<(), ConsensusError> {
+        snapshot.validate()?;
+        validate_cluster_id(&self.cluster_id)?;
+        validate_node_id(&self.source_node_id)?;
+        if self.term != snapshot.term
+            || self.last_included_index != snapshot.last_included_index
+            || self.last_included_term != snapshot.last_included_term
+            || self.retained_suffix_start != snapshot.last_included_index.saturating_add(1)
+            || self.snapshot_state_hash != snapshot.state_hash
+            || self.configuration_hash != snapshot.configuration_hash
+        {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "manifest metadata does not match snapshot".into(),
+            ));
+        }
+        if self.retained_suffix_end < self.retained_suffix_start.saturating_sub(1)
+            || validate_hex_digest(&self.snapshot_sha256).is_err()
+            || self.content_hash()? != self.manifest_hash
+        {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "manifest frontier or hash is invalid".into(),
+            ));
+        }
+        let snapshot_bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if digest_bytes(&snapshot_bytes) != self.snapshot_sha256 {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "snapshot bytes do not match manifest hash".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionRecoveryOutcome {
+    NoStaging,
+    Finalized,
+    Aborted,
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableCompactionStore {
+    snapshot_path: PathBuf,
+    manifest_path: PathBuf,
+}
+
+impl DurableCompactionStore {
+    pub fn new(snapshot_path: impl AsRef<Path>, manifest_path: impl AsRef<Path>) -> Self {
+        Self {
+            snapshot_path: snapshot_path.as_ref().to_path_buf(),
+            manifest_path: manifest_path.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn staging_paths(&self) -> (PathBuf, PathBuf) {
+        (self.snapshot_staging_path(), self.manifest_staging_path())
+    }
+
+    pub fn recovery_paths(&self) -> (PathBuf, PathBuf, PathBuf) {
+        (
+            self.snapshot_backup_path(),
+            self.manifest_backup_path(),
+            self.cutover_marker_path(),
+        )
+    }
+
+    fn snapshot_staging_path(&self) -> PathBuf {
+        self.snapshot_path.with_extension("snapshot.tmp")
+    }
+
+    fn manifest_staging_path(&self) -> PathBuf {
+        self.manifest_path.with_extension("manifest.tmp")
+    }
+
+    fn parent_directory(&self) -> &Path {
+        self.snapshot_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+    }
+
+    fn snapshot_backup_path(&self) -> PathBuf {
+        self.snapshot_path.with_extension("snapshot.bak")
+    }
+
+    fn manifest_backup_path(&self) -> PathBuf {
+        self.manifest_path.with_extension("manifest.bak")
+    }
+
+    fn cutover_marker_path(&self) -> PathBuf {
+        self.manifest_path.with_extension("cutover.marker")
+    }
+
+    fn sync_directory(&self) -> Result<(), ConsensusError> {
+        if let Ok(directory) = OpenOptions::new().read(true).open(self.parent_directory()) {
+            directory
+                .sync_all()
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn backup_existing_pair(&self) -> Result<(), ConsensusError> {
+        let snapshot_exists = self.snapshot_path.exists();
+        let manifest_exists = self.manifest_path.exists();
+        if !snapshot_exists && !manifest_exists {
+            return Ok(());
+        }
+        if snapshot_exists != manifest_exists {
+            return Err(ConsensusError::CompactionPersistence(
+                "durable snapshot and manifest are not a pair".into(),
+            ));
+        }
+        if self.snapshot_backup_path().exists() || self.manifest_backup_path().exists() {
+            return Ok(());
+        }
+        if self.load_latest()?.is_none() {
+            return Err(ConsensusError::CompactionPersistence(
+                "existing durable pair failed validation".into(),
+            ));
+        }
+        fs::rename(&self.snapshot_path, self.snapshot_backup_path())
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        fs::rename(&self.manifest_path, self.manifest_backup_path())
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        self.sync_directory()
+    }
+
+    fn cleanup_cutover_artifacts(&self) -> Result<(), ConsensusError> {
+        let _ = fs::remove_file(self.snapshot_backup_path());
+        let _ = fs::remove_file(self.manifest_backup_path());
+        let _ = fs::remove_file(self.cutover_marker_path());
+        self.sync_directory()
+    }
+
+    fn restore_previous_pair(&self) -> Result<(), ConsensusError> {
+        let snapshot_backup = self.snapshot_backup_path();
+        let manifest_backup = self.manifest_backup_path();
+        if snapshot_backup.exists() && manifest_backup.exists() {
+            let _ = fs::remove_file(&self.snapshot_path);
+            let _ = fs::remove_file(&self.manifest_path);
+            fs::rename(snapshot_backup, &self.snapshot_path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+            fs::rename(manifest_backup, &self.manifest_path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        }
+        self.sync_directory()
+    }
+
+    fn load_snapshot_file(
+        &self,
+        path: &Path,
+    ) -> Result<ConfigurationBoundSnapshot, ConsensusError> {
+        serde_json::from_slice(
+            &fs::read(path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))
+    }
+
+    fn load_manifest_file(&self, path: &Path) -> Result<CompactionManifest, ConsensusError> {
+        serde_json::from_slice(
+            &fs::read(path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))
+    }
+
+    pub fn stage(
+        &self,
+        snapshot: &ConfigurationBoundSnapshot,
+        manifest: &CompactionManifest,
+    ) -> Result<(), ConsensusError> {
+        snapshot.validate()?;
+        manifest.validate(snapshot)?;
+        let snapshot_bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let manifest_bytes = serde_json::to_vec(manifest)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if manifest_bytes.len() as u64 > MAX_COMPACTION_MANIFEST_BYTES
+            || snapshot_bytes.len() as u64 > MAX_SNAPSHOT_BYTES
+        {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "staged compaction artifact exceeds its bound".into(),
+            ));
+        }
+        fs::create_dir_all(self.parent_directory())
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        let snapshot_tmp = self.snapshot_staging_path();
+        let manifest_tmp = self.manifest_staging_path();
+        let mut snapshot_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&snapshot_tmp)
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        if let Err(error) = snapshot_file
+            .write_all(&snapshot_bytes)
+            .and_then(|_| snapshot_file.sync_all())
+        {
+            let _ = fs::remove_file(&snapshot_tmp);
+            return Err(ConsensusError::CompactionPersistence(error.to_string()));
+        }
+        let mut manifest_file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&manifest_tmp)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                let _ = fs::remove_file(&snapshot_tmp);
+                return Err(ConsensusError::CompactionPersistence(error.to_string()));
+            }
+        };
+        if let Err(error) = manifest_file
+            .write_all(&manifest_bytes)
+            .and_then(|_| manifest_file.sync_all())
+        {
+            let _ = fs::remove_file(&snapshot_tmp);
+            let _ = fs::remove_file(&manifest_tmp);
+            return Err(ConsensusError::CompactionPersistence(error.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn commit_staged(&self) -> Result<CompactionManifest, ConsensusError> {
+        let (snapshot, manifest) = self.load_staged_pair()?;
+        let mut committed = manifest.clone();
+        committed.lifecycle = CompactionLifecycle::Committed;
+        committed.manifest_hash = committed.content_hash()?;
+        committed.validate(&snapshot)?;
+        let committed_manifest_bytes = serde_json::to_vec(&committed)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        self.backup_existing_pair()?;
+        let marker_bytes = serde_json::to_vec(&committed.manifest_hash)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let marker_path = self.cutover_marker_path();
+        let mut marker = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&marker_path)
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        marker
+            .write_all(&marker_bytes)
+            .and_then(|_| marker.sync_all())
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        fs::rename(self.snapshot_staging_path(), &self.snapshot_path)
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        let manifest_tmp = self.manifest_staging_path();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&manifest_tmp)
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        file.write_all(&committed_manifest_bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        fs::rename(manifest_tmp, &self.manifest_path)
+            .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?;
+        self.sync_directory()?;
+        self.cleanup_cutover_artifacts()?;
+        Ok(committed)
+    }
+
+    fn load_staged_pair(
+        &self,
+    ) -> Result<(ConfigurationBoundSnapshot, CompactionManifest), ConsensusError> {
+        let snapshot: ConfigurationBoundSnapshot = serde_json::from_slice(
+            &fs::read(self.snapshot_staging_path())
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let manifest: CompactionManifest = serde_json::from_slice(
+            &fs::read(self.manifest_staging_path())
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        manifest.validate(&snapshot)?;
+        Ok((snapshot, manifest))
+    }
+
+    pub fn load_latest(
+        &self,
+    ) -> Result<Option<(ConfigurationBoundSnapshot, CompactionManifest)>, ConsensusError> {
+        if !self.snapshot_path.exists() || !self.manifest_path.exists() {
+            return Ok(None);
+        }
+        let snapshot: ConfigurationBoundSnapshot = serde_json::from_slice(
+            &fs::read(&self.snapshot_path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let manifest: CompactionManifest = serde_json::from_slice(
+            &fs::read(&self.manifest_path)
+                .map_err(|error| ConsensusError::CompactionPersistence(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if manifest.lifecycle != CompactionLifecycle::Committed {
+            return Err(ConsensusError::InvalidCompactionManifest(
+                "durable manifest is not committed".into(),
+            ));
+        }
+        manifest.validate(&snapshot)?;
+        Ok(Some((snapshot, manifest)))
+    }
+
+    pub fn recover_compaction(&self) -> Result<CompactionRecoveryOutcome, ConsensusError> {
+        let snapshot_tmp = self.snapshot_staging_path();
+        let manifest_tmp = self.manifest_staging_path();
+        let marker_exists = self.cutover_marker_path().exists();
+        let snapshot_exists = snapshot_tmp.exists();
+        let manifest_exists = manifest_tmp.exists();
+        if !snapshot_exists && !manifest_exists && !marker_exists {
+            return Ok(CompactionRecoveryOutcome::NoStaging);
+        }
+        if snapshot_exists && manifest_exists && self.load_staged_pair().is_ok() {
+            self.commit_staged()?;
+            return Ok(CompactionRecoveryOutcome::Finalized);
+        }
+        if !snapshot_exists && manifest_exists && self.snapshot_path.exists() {
+            let snapshot = self.load_snapshot_file(&self.snapshot_path);
+            let manifest = self.load_manifest_file(&manifest_tmp);
+            if let (Ok(snapshot), Ok(manifest)) = (snapshot, manifest) {
+                if manifest.validate(&snapshot).is_ok() {
+                    let mut committed = manifest;
+                    committed.lifecycle = CompactionLifecycle::Committed;
+                    committed.manifest_hash = committed.content_hash()?;
+                    committed.validate(&snapshot)?;
+                    let bytes = serde_json::to_vec(&committed)
+                        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&manifest_tmp)
+                        .map_err(|error| {
+                            ConsensusError::CompactionPersistence(error.to_string())
+                        })?;
+                    file.write_all(&bytes)
+                        .and_then(|_| file.sync_all())
+                        .map_err(|error| {
+                            ConsensusError::CompactionPersistence(error.to_string())
+                        })?;
+                    fs::rename(manifest_tmp, &self.manifest_path).map_err(|error| {
+                        ConsensusError::CompactionPersistence(error.to_string())
+                    })?;
+                    self.sync_directory()?;
+                    self.cleanup_cutover_artifacts()?;
+                    return Ok(CompactionRecoveryOutcome::Finalized);
+                }
+            }
+        }
+        let _ = fs::remove_file(snapshot_tmp);
+        let _ = fs::remove_file(manifest_tmp);
+        if self.snapshot_backup_path().exists() && self.manifest_backup_path().exists() {
+            self.restore_previous_pair()?;
+        } else {
+            let _ = fs::remove_file(self.cutover_marker_path());
+            self.sync_directory()?;
+        }
+        Ok(CompactionRecoveryOutcome::Aborted)
     }
 }
 

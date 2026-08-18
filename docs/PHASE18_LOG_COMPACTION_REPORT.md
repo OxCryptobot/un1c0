@@ -31,8 +31,8 @@ The node tracks `log_base_index` and `log_base_term`. Logical log indexes are tr
 
 ## Validation
 
-The Phase 18 integration suite passes five tests. The complete compliance validator now includes `log_compaction_safety` and `configuration_bound_snapshots` as first-class gates. The existing Phase 13–17 suites remain part of the complete run.
+The Phase 18 integration suite passes five tests. The complete compliance validator now includes `log_compaction_safety`, `configuration_bound_snapshots`, `durable_compaction_manifests`, and `compaction_recovery` as first-class gates, reporting **30 passed gates** in the Phase 19 run. The existing Phase 13–17 suites remain part of the complete run.
 
 ## Production boundaries
 
-The core does not persist snapshots or schedule compaction. Production still requires atomic durable snapshot replacement, fsync, process-crash recovery, retention policy, durable membership backup, transport delivery, and cross-node compaction/catch-up testing. This in-process slice proves bounded deterministic decisions and configuration-aware safety.
+Phase 18’s consensus core does not schedule compaction or own persistence. Phase 19 adds an explicit file-backed durability boundary, but production still requires storage quotas, backup retention, encryption-at-rest policy, fsync telemetry, process-crash recovery, durable membership backup, transport delivery, and cross-node compaction/catch-up testing. The implementation proves bounded deterministic decisions and configuration-aware safety without claiming a distributed storage service.
