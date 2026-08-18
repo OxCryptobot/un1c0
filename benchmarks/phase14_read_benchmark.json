@@ -5,10 +5,10 @@
     "operations": 128,
     "successful": 128,
     "errors": 0,
-    "p50_us": 3,
-    "p95_us": 4,
-    "p99_us": 7,
-    "throughput_ops_per_sec": 156288.72877434228
+    "p50_us": 2,
+    "p95_us": 2,
+    "p99_us": 4,
+    "throughput_ops_per_sec": 201599.2490427973
   },
   {
     "path": "quorum_read_index",
@@ -16,10 +16,10 @@
     "operations": 128,
     "successful": 128,
     "errors": 0,
-    "p50_us": 8,
-    "p95_us": 10,
-    "p99_us": 27,
-    "throughput_ops_per_sec": 95297.72722365706
+    "p50_us": 4,
+    "p95_us": 5,
+    "p99_us": 9,
+    "throughput_ops_per_sec": 177772.34584498807
   },
   {
     "path": "lease_fast_path",
@@ -27,10 +27,10 @@
     "operations": 256,
     "successful": 256,
     "errors": 0,
-    "p50_us": 8,
-    "p95_us": 18,
-    "p99_us": 104,
-    "throughput_ops_per_sec": 68349.14129716525
+    "p50_us": 11,
+    "p95_us": 12,
+    "p99_us": 30,
+    "throughput_ops_per_sec": 98706.59656956019
   },
   {
     "path": "quorum_read_index",
@@ -38,10 +38,10 @@
     "operations": 256,
     "successful": 256,
     "errors": 0,
-    "p50_us": 8,
-    "p95_us": 19,
-    "p99_us": 136,
-    "throughput_ops_per_sec": 93135.03816535616
+    "p50_us": 11,
+    "p95_us": 14,
+    "p99_us": 227,
+    "throughput_ops_per_sec": 86746.52090540326
   },
   {
     "path": "lease_fast_path",
@@ -49,10 +49,10 @@
     "operations": 512,
     "successful": 512,
     "errors": 0,
-    "p50_us": 13,
-    "p95_us": 27,
-    "p99_us": 977,
-    "throughput_ops_per_sec": 76309.0163424999
+    "p50_us": 11,
+    "p95_us": 156,
+    "p99_us": 369,
+    "throughput_ops_per_sec": 92884.77244863489
   },
   {
     "path": "quorum_read_index",
@@ -60,10 +60,10 @@
     "operations": 512,
     "successful": 512,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 20,
-    "p99_us": 894,
-    "throughput_ops_per_sec": 79285.6486936528
+    "p50_us": 11,
+    "p95_us": 99,
+    "p99_us": 301,
+    "throughput_ops_per_sec": 94154.18372828134
   },
   {
     "path": "lease_fast_path",
@@ -71,10 +71,10 @@
     "operations": 1024,
     "successful": 1024,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 142,
-    "p99_us": 1837,
-    "throughput_ops_per_sec": 68080.41680107673
+    "p50_us": 12,
+    "p95_us": 318,
+    "p99_us": 942,
+    "throughput_ops_per_sec": 86743.99306319132
   },
   {
     "path": "quorum_read_index",
@@ -82,10 +82,10 @@
     "operations": 1024,
     "successful": 1024,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 103,
-    "p99_us": 1844,
-    "throughput_ops_per_sec": 69358.10898908862
+    "p50_us": 12,
+    "p95_us": 401,
+    "p99_us": 1012,
+    "throughput_ops_per_sec": 79257.53031677935
   },
   {
     "path": "lease_fast_path",
@@ -93,10 +93,10 @@
     "operations": 2048,
     "successful": 2048,
     "errors": 0,
-    "p50_us": 13,
-    "p95_us": 741,
-    "p99_us": 3035,
-    "throughput_ops_per_sec": 77107.98664796898
+    "p50_us": 12,
+    "p95_us": 633,
+    "p99_us": 2482,
+    "throughput_ops_per_sec": 85646.30634830664
   },
   {
     "path": "quorum_read_index",
@@ -104,10 +104,10 @@
     "operations": 2048,
     "successful": 2048,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 419,
-    "p99_us": 3253,
-    "throughput_ops_per_sec": 71143.40725369565
+    "p50_us": 12,
+    "p95_us": 784,
+    "p99_us": 2413,
+    "throughput_ops_per_sec": 87013.87582406134
   },
   {
     "path": "lease_fast_path",
@@ -115,10 +115,10 @@
     "operations": 4096,
     "successful": 4096,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 1480,
-    "p99_us": 6787,
-    "throughput_ops_per_sec": 73577.27312997504
+    "p50_us": 11,
+    "p95_us": 1587,
+    "p99_us": 4593,
+    "throughput_ops_per_sec": 91820.99550727222
   },
   {
     "path": "quorum_read_index",
@@ -126,9 +126,9 @@
     "operations": 4096,
     "successful": 4096,
     "errors": 0,
-    "p50_us": 14,
-    "p95_us": 1382,
-    "p99_us": 5774,
-    "throughput_ops_per_sec": 76103.430061115
+    "p50_us": 11,
+    "p95_us": 1731,
+    "p99_us": 4496,
+    "throughput_ops_per_sec": 86524.20746012309
   }
 ]

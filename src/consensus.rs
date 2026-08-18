@@ -34,6 +34,8 @@ const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 const MAX_COMPACTION_DISCARD_ENTRIES: usize = MAX_BATCH_ENTRIES;
 const MAX_RETAINED_LOG_ENTRIES: usize = MAX_LOG_ENTRIES;
 const MAX_COMPACTION_MANIFEST_BYTES: u64 = 128 * 1024;
+const MAX_SNAPSHOT_BANDWIDTH_BYTES: u64 = MAX_SNAPSHOT_BYTES;
+const MAX_SNAPSHOT_BANDWIDTH_WINDOW_TICKS: u64 = MAX_ELECTION_TICKS;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -111,6 +113,10 @@ pub enum ConsensusError {
     CompactionPersistence(String),
     #[error("invalid snapshot acknowledgement: {0}")]
     InvalidSnapshotAcknowledgement(String),
+    #[error("snapshot bandwidth violation: {0}")]
+    SnapshotBandwidth(String),
+    #[error("snapshot cancellation violation: {0}")]
+    SnapshotCancellation(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -786,6 +792,85 @@ pub enum SnapshotInstallReadiness {
     DurablyStaged,
     Installed,
     Rejected,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotBandwidthConfig {
+    pub max_bytes_per_window: u64,
+    pub window_ticks: u64,
+}
+
+impl Default for SnapshotBandwidthConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes_per_window: MAX_SNAPSHOT_BANDWIDTH_BYTES,
+            window_ticks: 1,
+        }
+    }
+}
+
+impl SnapshotBandwidthConfig {
+    pub fn new(max_bytes_per_window: u64, window_ticks: u64) -> Result<Self, ConsensusError> {
+        let config = Self {
+            max_bytes_per_window,
+            window_ticks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.max_bytes_per_window == 0
+            || self.max_bytes_per_window > MAX_SNAPSHOT_BANDWIDTH_BYTES
+        {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "per-window byte budget must be positive and bounded".into(),
+            ));
+        }
+        if self.window_ticks == 0 || self.window_ticks > MAX_SNAPSHOT_BANDWIDTH_WINDOW_TICKS {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "bandwidth window must be positive and bounded".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SnapshotTransferProgressAction {
+    Accepted {
+        bytes_sent: u64,
+        bytes_remaining: u64,
+    },
+    Backpressured {
+        retry_at_tick: u64,
+        available_bytes: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTransferMetrics {
+    pub follower_id: String,
+    pub active_transfer_id: Option<String>,
+    pub snapshot_bytes: u64,
+    pub bytes_sent: u64,
+    pub bytes_remaining: u64,
+    pub bandwidth_window_start_tick: Option<u64>,
+    pub bandwidth_window_bytes: u64,
+    pub bandwidth_limit_bytes: u64,
+    pub bandwidth_window_ticks: u64,
+    pub sent_transfers: u64,
+    pub acknowledged_transfers: u64,
+    pub rejected_transfers: u64,
+    pub cancelled_transfers: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTransferCancellation {
+    pub follower_id: String,
+    pub transfer_id: String,
+    pub retry_at_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -858,6 +943,8 @@ pub struct SnapshotReplicationStatus {
     pub sent_transfers: u64,
     pub acknowledged_transfers: u64,
     pub rejected_transfers: u64,
+    pub cancelled_transfers: u64,
+    pub metrics: SnapshotTransferMetrics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2037,6 +2124,10 @@ struct PeerReplicationFlow {
 struct SnapshotReplicationState {
     active_transfer_id: Option<String>,
     snapshot: Option<ConfigurationBoundSnapshot>,
+    snapshot_bytes: u64,
+    bytes_sent: u64,
+    bandwidth_window_start_tick: Option<u64>,
+    bandwidth_window_bytes: u64,
     readiness: SnapshotInstallReadiness,
     last_installed_index: u64,
     last_installed_term: u64,
@@ -2044,6 +2135,7 @@ struct SnapshotReplicationState {
     sent_transfers: u64,
     acknowledged_transfers: u64,
     rejected_transfers: u64,
+    cancelled_transfers: u64,
 }
 
 impl SnapshotReplicationState {
@@ -2051,6 +2143,10 @@ impl SnapshotReplicationState {
         Self {
             active_transfer_id: None,
             snapshot: None,
+            snapshot_bytes: 0,
+            bytes_sent: 0,
+            bandwidth_window_start_tick: None,
+            bandwidth_window_bytes: 0,
             readiness: SnapshotInstallReadiness::Unknown,
             last_installed_index: 0,
             last_installed_term: 0,
@@ -2058,6 +2154,7 @@ impl SnapshotReplicationState {
             sent_transfers: 0,
             acknowledged_transfers: 0,
             rejected_transfers: 0,
+            cancelled_transfers: 0,
         }
     }
 }
@@ -2103,6 +2200,7 @@ pub struct ConsensusNode {
     peer_replication_flow: BTreeMap<String, PeerReplicationFlow>,
     compaction_config: LogCompactionConfig,
     compacted_snapshot: Option<ConfigurationBoundSnapshot>,
+    snapshot_bandwidth_config: SnapshotBandwidthConfig,
     snapshot_replication_state: BTreeMap<String, SnapshotReplicationState>,
     read_rounds: BTreeMap<String, ReadIndexRound>,
     completed_read_requests: BTreeSet<String>,
@@ -2173,6 +2271,7 @@ impl ConsensusNode {
             peer_replication_flow: BTreeMap::new(),
             compaction_config: LogCompactionConfig::default(),
             compacted_snapshot: None,
+            snapshot_bandwidth_config: SnapshotBandwidthConfig::default(),
             snapshot_replication_state: BTreeMap::new(),
             read_rounds: BTreeMap::new(),
             completed_read_requests: BTreeSet::new(),
@@ -2806,6 +2905,46 @@ impl ConsensusNode {
         })
     }
 
+    pub fn set_snapshot_bandwidth_config(
+        &mut self,
+        config: SnapshotBandwidthConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.snapshot_bandwidth_config = config;
+        Ok(())
+    }
+
+    pub fn snapshot_bandwidth_config(&self) -> SnapshotBandwidthConfig {
+        self.snapshot_bandwidth_config
+    }
+
+    pub fn snapshot_transfer_metrics(
+        &self,
+        follower_id: &str,
+    ) -> Result<SnapshotTransferMetrics, ConsensusError> {
+        self.validate_replication_peer(follower_id)?;
+        let state = self
+            .snapshot_replication_state
+            .get(follower_id)
+            .cloned()
+            .unwrap_or_else(SnapshotReplicationState::new);
+        Ok(SnapshotTransferMetrics {
+            follower_id: follower_id.to_string(),
+            active_transfer_id: state.active_transfer_id,
+            snapshot_bytes: state.snapshot_bytes,
+            bytes_sent: state.bytes_sent,
+            bytes_remaining: state.snapshot_bytes.saturating_sub(state.bytes_sent),
+            bandwidth_window_start_tick: state.bandwidth_window_start_tick,
+            bandwidth_window_bytes: state.bandwidth_window_bytes,
+            bandwidth_limit_bytes: self.snapshot_bandwidth_config.max_bytes_per_window,
+            bandwidth_window_ticks: self.snapshot_bandwidth_config.window_ticks,
+            sent_transfers: state.sent_transfers,
+            acknowledged_transfers: state.acknowledged_transfers,
+            rejected_transfers: state.rejected_transfers,
+            cancelled_transfers: state.cancelled_transfers,
+        })
+    }
+
     pub fn snapshot_replication_status(
         &self,
         follower_id: &str,
@@ -2816,6 +2955,7 @@ impl ConsensusNode {
             .get(follower_id)
             .cloned()
             .unwrap_or_else(SnapshotReplicationState::new);
+        let metrics = self.snapshot_transfer_metrics(follower_id)?;
         Ok(SnapshotReplicationStatus {
             follower_id: follower_id.to_string(),
             active_transfer_id: state.active_transfer_id,
@@ -2826,6 +2966,8 @@ impl ConsensusNode {
             sent_transfers: state.sent_transfers,
             acknowledged_transfers: state.acknowledged_transfers,
             rejected_transfers: state.rejected_transfers,
+            cancelled_transfers: state.cancelled_transfers,
+            metrics,
         })
     }
 
@@ -2861,6 +3003,14 @@ impl ConsensusNode {
                 retry_at_tick: state.retry_at_tick,
             });
         }
+        let snapshot_bytes = serde_json::to_vec(&snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?
+            .len() as u64;
+        if snapshot_bytes == 0 || snapshot_bytes > MAX_SNAPSHOT_BYTES {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "serialized snapshot is outside the bounded transfer size".into(),
+            ));
+        }
         let transfer_id = digest_json(&(
             &self.id,
             follower_id,
@@ -2871,12 +3021,142 @@ impl ConsensusNode {
         ))?;
         state.active_transfer_id = Some(transfer_id.clone());
         state.snapshot = Some(snapshot.clone());
+        state.snapshot_bytes = snapshot_bytes;
+        state.bytes_sent = 0;
+        state.bandwidth_window_start_tick = None;
+        state.bandwidth_window_bytes = 0;
         state.readiness = SnapshotInstallReadiness::Receiving;
         state.retry_at_tick = None;
         state.sent_transfers = state.sent_transfers.saturating_add(1);
         Ok(SnapshotTransferAction::Send {
             transfer_id,
             snapshot,
+        })
+    }
+
+    pub fn record_snapshot_transfer_progress(
+        &mut self,
+        follower_id: &str,
+        transfer_id: &str,
+        bytes: u64,
+        now_tick: u64,
+    ) -> Result<SnapshotTransferProgressAction, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.validate_replication_peer(follower_id)?;
+        validate_transfer_id(transfer_id)?;
+        if bytes == 0 || bytes > MAX_SNAPSHOT_CHUNK_BYTES as u64 {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "progress bytes must be positive and fit the bounded chunk size".into(),
+            ));
+        }
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        let config = self.snapshot_bandwidth_config;
+        let state = self
+            .snapshot_replication_state
+            .get_mut(follower_id)
+            .ok_or_else(|| {
+                ConsensusError::SnapshotBandwidth("progress has no active snapshot transfer".into())
+            })?;
+        if state.active_transfer_id.as_deref() != Some(transfer_id) {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "progress transfer ID does not match the active transfer".into(),
+            ));
+        }
+        if bytes > state.snapshot_bytes.saturating_sub(state.bytes_sent) {
+            return Err(ConsensusError::SnapshotBandwidth(
+                "progress exceeds the remaining snapshot bytes".into(),
+            ));
+        }
+        let window_expired = state.bandwidth_window_start_tick.is_some_and(|start| {
+            now_tick
+                .checked_sub(start)
+                .is_some_and(|elapsed| elapsed >= config.window_ticks)
+        });
+        if state.bandwidth_window_start_tick.is_none() || window_expired {
+            state.bandwidth_window_start_tick = Some(now_tick);
+            state.bandwidth_window_bytes = 0;
+        }
+        let available_bytes = config
+            .max_bytes_per_window
+            .saturating_sub(state.bandwidth_window_bytes);
+        if bytes > available_bytes {
+            let start = state.bandwidth_window_start_tick.unwrap_or(now_tick);
+            let retry_at_tick = start.checked_add(config.window_ticks).ok_or_else(|| {
+                ConsensusError::SnapshotBandwidth("bandwidth retry deadline overflow".into())
+            })?;
+            return Ok(SnapshotTransferProgressAction::Backpressured {
+                retry_at_tick,
+                available_bytes,
+            });
+        }
+        state.bytes_sent = state.bytes_sent.saturating_add(bytes);
+        state.bandwidth_window_bytes = state.bandwidth_window_bytes.saturating_add(bytes);
+        Ok(SnapshotTransferProgressAction::Accepted {
+            bytes_sent: state.bytes_sent,
+            bytes_remaining: state.snapshot_bytes.saturating_sub(state.bytes_sent),
+        })
+    }
+
+    pub fn cancel_snapshot_transfer(
+        &mut self,
+        follower_id: &str,
+        transfer_id: &str,
+        now_tick: u64,
+        reason: &str,
+    ) -> Result<SnapshotTransferCancellation, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.validate_replication_peer(follower_id)?;
+        validate_transfer_id(transfer_id)?;
+        if reason.is_empty()
+            || reason.len() > MAX_VALUE_BYTES
+            || reason.chars().any(char::is_control)
+        {
+            return Err(ConsensusError::SnapshotCancellation(
+                "cancellation reason is empty, oversized, or contains control characters".into(),
+            ));
+        }
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        let retry_at_tick = now_tick
+            .checked_add(self.replication_flow_config.retry_backoff_ticks)
+            .ok_or_else(|| {
+                ConsensusError::SnapshotCancellation("cancellation retry deadline overflow".into())
+            })?;
+        let state = self
+            .snapshot_replication_state
+            .get_mut(follower_id)
+            .ok_or_else(|| {
+                ConsensusError::SnapshotCancellation(
+                    "cancellation has no active snapshot transfer".into(),
+                )
+            })?;
+        if state.active_transfer_id.as_deref() != Some(transfer_id) {
+            return Err(ConsensusError::SnapshotCancellation(
+                "cancellation transfer ID does not match the active transfer".into(),
+            ));
+        }
+        state.active_transfer_id = None;
+        state.snapshot = None;
+        state.snapshot_bytes = 0;
+        state.bytes_sent = 0;
+        state.bandwidth_window_start_tick = None;
+        state.bandwidth_window_bytes = 0;
+        state.readiness = SnapshotInstallReadiness::Cancelled;
+        state.retry_at_tick = Some(retry_at_tick);
+        state.cancelled_transfers = state.cancelled_transfers.saturating_add(1);
+        Ok(SnapshotTransferCancellation {
+            follower_id: follower_id.to_string(),
+            transfer_id: transfer_id.to_string(),
+            retry_at_tick,
         })
     }
 
@@ -2931,6 +3211,13 @@ impl ConsensusNode {
             ));
         }
         let current_readiness = state.readiness;
+        if acknowledgement.readiness == SnapshotInstallReadiness::Installed
+            && state.bytes_sent < state.snapshot_bytes
+        {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "installed acknowledgement precedes complete byte accounting".into(),
+            ));
+        }
         let flow = self
             .snapshot_replication_state
             .get_mut(&acknowledgement.follower_id)
@@ -2970,6 +3257,10 @@ impl ConsensusNode {
                 let installed_term = snapshot.last_included_term;
                 flow.active_transfer_id = None;
                 flow.snapshot = None;
+                flow.snapshot_bytes = 0;
+                flow.bytes_sent = 0;
+                flow.bandwidth_window_start_tick = None;
+                flow.bandwidth_window_bytes = 0;
                 flow.readiness = SnapshotInstallReadiness::Installed;
                 flow.last_installed_index = flow.last_installed_index.max(installed_index);
                 flow.last_installed_term = installed_term;
@@ -2986,6 +3277,10 @@ impl ConsensusNode {
             SnapshotInstallReadiness::Rejected => {
                 flow.active_transfer_id = None;
                 flow.snapshot = None;
+                flow.snapshot_bytes = 0;
+                flow.bytes_sent = 0;
+                flow.bandwidth_window_start_tick = None;
+                flow.bandwidth_window_bytes = 0;
                 flow.readiness = SnapshotInstallReadiness::Rejected;
                 flow.retry_at_tick = Some(
                     now_tick

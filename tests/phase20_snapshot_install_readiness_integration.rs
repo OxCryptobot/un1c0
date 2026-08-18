@@ -119,6 +119,14 @@ fn one_snapshot_transfer_is_backpressured_until_installed() {
         leader.replication_catch_up_for("node-c").unwrap(),
         ReplicationCatchUpAction::Snapshot(_)
     ));
+    let snapshot_bytes = serde_json::to_vec(&snapshot).unwrap().len() as u64;
+    assert!(matches!(
+        leader.record_snapshot_transfer_progress("node-c", &transfer_id, snapshot_bytes, 13),
+        Ok(un1c0::SnapshotTransferProgressAction::Accepted {
+            bytes_remaining: 0,
+            ..
+        })
+    ));
     assert!(leader
         .acknowledge_snapshot_transfer(
             ack(
@@ -128,7 +136,7 @@ fn one_snapshot_transfer_is_backpressured_until_installed() {
                 None,
                 1
             ),
-            13,
+            14,
         )
         .unwrap());
     let status = leader.snapshot_replication_status("node-c").unwrap();
