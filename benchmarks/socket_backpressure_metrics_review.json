@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "cluster_mutation_performed": false,
   "failures": [],
-  "gate_count": 68,
+  "gate_count": 76,
   "phase24_evidence_checked": [
     "per_peer_send_isolation",
     "exact_frame_byte_admission",
@@ -40,6 +40,16 @@
     "remote_fence_owner_term_binding",
     "remote_fence_idempotent",
     "remote_fence_misbinding_rejected"
+  ],
+  "phase30_evidence_checked": [
+    "region_topology_is_deterministic",
+    "asymmetric_partition_is_replayable",
+    "observer_quorum_admission",
+    "split_brain_commit_exclusion",
+    "stale_owner_is_fenced_after_heal",
+    "transfer_crash_recovers_safely",
+    "clock_skew_boundary_is_fail_closed",
+    "multi_region_retry_reaches_quorum"
   ],
   "result": "passed",
   "runtime_metric_contract": [

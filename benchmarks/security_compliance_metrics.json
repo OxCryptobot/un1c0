@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 34.392,
-        "verification_throughput_ops_per_sec": 33524.64889417293
+        "verification_p95_us": 35.665,
+        "verification_throughput_ops_per_sec": 31263.528803596935
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.815,
-        "verification_throughput_ops_per_sec": 33059.92196260509
+        "verification_p95_us": 31.777,
+        "verification_throughput_ops_per_sec": 31573.72080977716
       },
       {
         "cluster_size": 5,
@@ -39,14 +39,15 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 30.166,
-        "verification_throughput_ops_per_sec": 32435.32487444385
+        "verification_p95_us": 30.025,
+        "verification_throughput_ops_per_sec": 32640.2009853016
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "9f2c74e56418dad077d00c7f32c78561cfa2f632",
+  "commit": "f0d29cc61cd0521218e7815eb3f7e580476d5e30",
   "gates": {
+    "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
     "authenticated_ack_binding": "passed",
     "authenticated_consensus_transport": "passed",
@@ -56,6 +57,7 @@
     "authenticated_remote_fence_observation": "passed",
     "authenticated_socket_transport": "passed",
     "cli_smoke": "passed",
+    "clock_skew_boundary_fail_closed": "passed",
     "compaction_quorum_admission": "passed",
     "compaction_recovery": "passed",
     "compose_mtls_smoke": "passed",
@@ -81,7 +83,9 @@
     "lease_expiry_fences_delivery": "passed",
     "linearizable_read_consistency": "passed",
     "log_compaction_safety": "passed",
+    "multi_region_retry_reaches_quorum": "passed",
     "network_stress_packet_corruption": "passed",
+    "observer_quorum_admission": "passed",
     "ownership_transfer_clears_fence": "passed",
     "per_peer_socket_quotas": "passed",
     "phase11_membership_change": "passed",
@@ -90,6 +94,7 @@
     "quorum_loss_fences_delivery": "passed",
     "quota_recovery_after_restart": "passed",
     "receive_window_admission": "passed",
+    "region_topology_deterministic": "passed",
     "remote_audit_ordering": "passed",
     "remote_audit_outbox_durability": "passed",
     "remote_fence_idempotent": "passed",
@@ -114,9 +119,12 @@
     "snapshot_transfer_metrics": "passed",
     "socket_boundary_crash_injection": "passed",
     "socket_layer_backpressure": "passed",
-    "socket_quota_epoch_reset": "passed"
+    "socket_quota_epoch_reset": "passed",
+    "split_brain_commit_exclusion": "passed",
+    "stale_owner_fenced_after_heal": "passed",
+    "transfer_crash_recovers_safely": "passed"
   },
-  "generated_at_utc": "2026-08-18T22:36:52.561256+00:00",
+  "generated_at_utc": "2026-08-18T23:11:54.229119+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -202,132 +210,132 @@
       "errors": 0,
       "operations": 128,
       "p50_us": 2,
-      "p95_us": 3,
-      "p99_us": 7,
+      "p95_us": 2,
+      "p99_us": 5,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 196946.7105283403
+      "throughput_ops_per_sec": 301808.4930796256
     },
     {
       "concurrency": 1,
       "errors": 0,
       "operations": 128,
       "p50_us": 4,
-      "p95_us": 6,
-      "p99_us": 8,
+      "p95_us": 7,
+      "p99_us": 31,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 177917.14620897482
+      "throughput_ops_per_sec": 145424.7994728351
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
       "p50_us": 11,
-      "p95_us": 21,
-      "p99_us": 126,
+      "p95_us": 12,
+      "p99_us": 116,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 95979.07656130963
+      "throughput_ops_per_sec": 89229.32354413296
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 19,
-      "p99_us": 325,
+      "p50_us": 10,
+      "p95_us": 11,
+      "p99_us": 42,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 88088.81003716936
+      "throughput_ops_per_sec": 81111.06956985152
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
-      "p50_us": 11,
-      "p95_us": 126,
-      "p99_us": 701,
+      "p50_us": 10,
+      "p95_us": 125,
+      "p99_us": 529,
       "path": "lease_fast_path",
       "successful": 512,
-      "throughput_ops_per_sec": 87621.75059358601
+      "throughput_ops_per_sec": 94438.54715886612
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
-      "p50_us": 11,
-      "p95_us": 47,
-      "p99_us": 464,
+      "p50_us": 10,
+      "p95_us": 65,
+      "p99_us": 307,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 86415.57316647927
+      "throughput_ops_per_sec": 104463.80788126383
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "operations": 1024,
+      "p50_us": 10,
+      "p95_us": 299,
+      "p99_us": 1162,
+      "path": "lease_fast_path",
+      "successful": 1024,
+      "throughput_ops_per_sec": 91763.35199337511
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 316,
-      "p99_us": 1203,
-      "path": "lease_fast_path",
-      "successful": 1024,
-      "throughput_ops_per_sec": 95444.46548862348
-    },
-    {
-      "concurrency": 8,
-      "errors": 0,
-      "operations": 1024,
-      "p50_us": 11,
-      "p95_us": 193,
-      "p99_us": 1355,
+      "p95_us": 339,
+      "p99_us": 841,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 86777.08712029728
+      "throughput_ops_per_sec": 92393.47276206136
+    },
+    {
+      "concurrency": 16,
+      "errors": 0,
+      "operations": 2048,
+      "p50_us": 10,
+      "p95_us": 580,
+      "p99_us": 2609,
+      "path": "lease_fast_path",
+      "successful": 2048,
+      "throughput_ops_per_sec": 91333.29530752452
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 482,
-      "p99_us": 2749,
-      "path": "lease_fast_path",
-      "successful": 2048,
-      "throughput_ops_per_sec": 90724.87045126408
-    },
-    {
-      "concurrency": 16,
-      "errors": 0,
-      "operations": 2048,
-      "p50_us": 11,
-      "p95_us": 503,
-      "p99_us": 3113,
+      "p95_us": 567,
+      "p99_us": 2422,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 86826.12771156768
+      "throughput_ops_per_sec": 90179.6040419661
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "operations": 4096,
+      "p50_us": 10,
+      "p95_us": 1303,
+      "p99_us": 4870,
+      "path": "lease_fast_path",
+      "successful": 4096,
+      "throughput_ops_per_sec": 96533.92992056196
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1355,
-      "p99_us": 4580,
-      "path": "lease_fast_path",
-      "successful": 4096,
-      "throughput_ops_per_sec": 89050.50550728242
-    },
-    {
-      "concurrency": 32,
-      "errors": 0,
-      "operations": 4096,
-      "p50_us": 11,
-      "p95_us": 1370,
-      "p99_us": 4537,
+      "p95_us": 1442,
+      "p99_us": 5223,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 91856.90344996231
+      "throughput_ops_per_sec": 94791.75540376069
     }
   ],
   "phase15_election_timers": {
@@ -472,6 +480,17 @@
     "remote_fence_idempotent": true,
     "remote_fence_misbinding_rejected": true,
     "remote_fence_owner_term_binding": true
+  },
+  "phase30_multi_region_failover": {
+    "asymmetric_partition_is_replayable": true,
+    "clock_skew_boundary_is_fail_closed": true,
+    "multi_region_retry_reaches_quorum": true,
+    "observer_quorum_admission": true,
+    "region_topology_is_deterministic": true,
+    "split_brain_commit_exclusion": true,
+    "stale_owner_is_fenced_after_heal": true,
+    "transfer_crash_recovers_safely": true,
+    "transport_and_cloud_region_authority": "deployment_boundary"
   },
   "repository_search_before_after": {
     "baseline_errors": 0,

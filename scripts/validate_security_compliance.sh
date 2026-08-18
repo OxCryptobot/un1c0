@@ -75,6 +75,8 @@ printf '%s\n' '== Phase 28 partition-aware ownership fencing =='
 scripts/validate_phase28_partition_ownership_fencing.sh >"$TMP_DIR/phase28-partition-ownership-fencing.log"
 printf '%s\n' '== Phase 29 authenticated remote ownership fencing =='
 scripts/validate_phase29_authenticated_remote_fencing.sh >"$TMP_DIR/phase29-authenticated-remote-fencing.log"
+printf '%s\n' '== Phase 30 deterministic multi-region failover =='
+scripts/validate_phase30_multiregion_failover.sh >"$TMP_DIR/phase30-multiregion-failover.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

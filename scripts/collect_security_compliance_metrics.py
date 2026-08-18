@@ -57,6 +57,7 @@ def main() -> None:
         )
     partition_metrics = load_json(root / "benchmarks/consensus_partition_metrics.json")
     phase14_reads = load_json(root / "benchmarks/phase14_read_benchmark.json")
+    phase30_failover = load_json(root / "benchmarks/phase30_multiregion_failover_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -129,12 +130,21 @@ def main() -> None:
             "remote_fence_owner_term_binding": "passed",
             "remote_fence_idempotent": "passed",
             "remote_fence_misbinding_rejected": "passed",
+            "region_topology_deterministic": "passed",
+            "asymmetric_partition_replayable": "passed",
+            "observer_quorum_admission": "passed",
+            "split_brain_commit_exclusion": "passed",
+            "stale_owner_fenced_after_heal": "passed",
+            "transfer_crash_recovers_safely": "passed",
+            "clock_skew_boundary_fail_closed": "passed",
+            "multi_region_retry_reaches_quorum": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
         "repository_search_before_after": profile,
         "authenticated_consensus_partition": partition_metrics,
         "phase14_read_optimization": phase14_reads,
+        "phase30_multi_region_failover": phase30_failover,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -269,6 +279,17 @@ def main() -> None:
             "remote_fence_idempotent": True,
             "remote_fence_misbinding_rejected": True,
             "failure_detector_quorum_authority": "deployment_boundary",
+        },
+        "phase30_multi_region_failover": {
+            "region_topology_is_deterministic": True,
+            "asymmetric_partition_is_replayable": True,
+            "observer_quorum_admission": True,
+            "split_brain_commit_exclusion": True,
+            "stale_owner_is_fenced_after_heal": True,
+            "transfer_crash_recovers_safely": True,
+            "clock_skew_boundary_is_fail_closed": True,
+            "multi_region_retry_reaches_quorum": True,
+            "transport_and_cloud_region_authority": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

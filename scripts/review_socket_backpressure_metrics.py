@@ -45,6 +45,16 @@ PHASE29_KEYS = [
     "remote_fence_idempotent",
     "remote_fence_misbinding_rejected",
 ]
+PHASE30_KEYS = [
+    "region_topology_is_deterministic",
+    "asymmetric_partition_is_replayable",
+    "observer_quorum_admission",
+    "split_brain_commit_exclusion",
+    "stale_owner_is_fenced_after_heal",
+    "transfer_crash_recovers_safely",
+    "clock_skew_boundary_is_fail_closed",
+    "multi_region_retry_reaches_quorum",
+]
 
 
 def main() -> int:
@@ -61,6 +71,7 @@ def main() -> int:
     phase26 = artifact["phase26_authenticated_durable_delivery"]
     phase28 = artifact["phase28_partition_ownership_fencing"]
     phase29 = artifact["phase29_authenticated_remote_fencing"]
+    phase30 = artifact["phase30_multi_region_failover"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -81,6 +92,11 @@ def main() -> int:
             failures.append(f"phase29 evidence is not true: {key}")
     if phase29.get("failure_detector_quorum_authority") != "deployment_boundary":
         failures.append("phase29 failure-detector quorum authority is not deployment-bound")
+    for key in PHASE30_KEYS:
+        if phase30.get(key) is not True:
+            failures.append(f"phase30 evidence is not true: {key}")
+    if phase30.get("transport_and_cloud_region_authority") != "deployment_boundary":
+        failures.append("phase30 cloud-region authority is not deployment-bound")
     if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
         failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
@@ -103,6 +119,7 @@ def main() -> int:
         "phase26_crash_points_retaining_queue": phase26.get("crash_points_retaining_queue"),
         "phase28_evidence_checked": PHASE28_KEYS,
         "phase29_evidence_checked": PHASE29_KEYS,
+        "phase30_evidence_checked": PHASE30_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",

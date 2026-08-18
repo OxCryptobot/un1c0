@@ -1,0 +1,143 @@
+{
+  "benchmark": "phase30_multiregion_failover",
+  "production_boundary": "not a cloud-region, kernel, DNS, load-balancer, or managed-storage benchmark",
+  "scenario_count": 5,
+  "scenarios": [
+    {
+      "delivery_committed": false,
+      "expected": {
+        "fenced": true,
+        "liveness_passed": false,
+        "safety_passed": true
+      },
+      "name": "majority_partition",
+      "report": {
+        "active_owner_id": "node-a1",
+        "committed": false,
+        "delivered_acknowledgements": 0,
+        "dropped_acknowledgements": 3,
+        "events": 6,
+        "fenced": true,
+        "invariant_failures": [],
+        "liveness_passed": false,
+        "owner_term": 1,
+        "ownership_epoch": 1,
+        "safety_passed": true,
+        "scenario_id": "majority-partition",
+        "seed": 30,
+        "trace_digest": "a6a168e34401c0a023f4a593bbd7cca4d3985741a34ec273d8ba859be92120e4"
+      }
+    },
+    {
+      "committed_after_heal": true,
+      "expected": {
+        "committed": true,
+        "liveness_passed": true,
+        "safety_passed": true
+      },
+      "fenced_delivery": false,
+      "name": "heal_and_failover",
+      "report": {
+        "active_owner_id": "node-b1",
+        "committed": true,
+        "delivered_acknowledgements": 4,
+        "dropped_acknowledgements": 3,
+        "events": 17,
+        "fenced": false,
+        "invariant_failures": [],
+        "liveness_passed": true,
+        "owner_term": 2,
+        "ownership_epoch": 2,
+        "safety_passed": true,
+        "scenario_id": "heal-failover",
+        "seed": 31,
+        "trace_digest": "05cfcd99e569c52141fbe40ccb8b421a020af42e798ca544aaab9795b86b4b25"
+      }
+    },
+    {
+      "expected": {
+        "committed": true,
+        "liveness_passed": true,
+        "safety_passed": true
+      },
+      "first_attempt_committed": false,
+      "first_trace_digest": "a6a168e34401c0a023f4a593bbd7cca4d3985741a34ec273d8ba859be92120e4",
+      "name": "asymmetric_partition",
+      "recovered_after_heal": true,
+      "report": {
+        "active_owner_id": "node-b1",
+        "committed": true,
+        "delivered_acknowledgements": 4,
+        "dropped_acknowledgements": 3,
+        "events": 17,
+        "fenced": false,
+        "invariant_failures": [],
+        "liveness_passed": true,
+        "owner_term": 2,
+        "ownership_epoch": 2,
+        "safety_passed": true,
+        "scenario_id": "asymmetric-partition",
+        "seed": 32,
+        "trace_digest": "05cfcd99e569c52141fbe40ccb8b421a020af42e798ca544aaab9795b86b4b25"
+      }
+    },
+    {
+      "expected": {
+        "fenced": true,
+        "safety_passed": true
+      },
+      "first_report_admitted": false,
+      "name": "observer_quorum",
+      "quorum_report_admitted": true,
+      "report": {
+        "active_owner_id": "node-a1",
+        "committed": false,
+        "delivered_acknowledgements": 0,
+        "dropped_acknowledgements": 0,
+        "events": 3,
+        "fenced": true,
+        "invariant_failures": [],
+        "liveness_passed": false,
+        "owner_term": 1,
+        "ownership_epoch": 1,
+        "safety_passed": true,
+        "scenario_id": "observer-quorum",
+        "seed": 33,
+        "trace_digest": "048b82ae215ea174ae8f65ecc823d6fcf7cab0c25a0f50bf988b2bfae66740ab"
+      }
+    },
+    {
+      "expected": {
+        "committed": true,
+        "safety_passed": true
+      },
+      "name": "clock_skew_boundary",
+      "recovered_after_reanchor": true,
+      "report": {
+        "active_owner_id": "node-b1",
+        "committed": true,
+        "delivered_acknowledgements": 4,
+        "dropped_acknowledgements": 0,
+        "events": 11,
+        "fenced": false,
+        "invariant_failures": [],
+        "liveness_passed": true,
+        "owner_term": 2,
+        "ownership_epoch": 2,
+        "safety_passed": true,
+        "scenario_id": "clock-skew",
+        "seed": 34,
+        "trace_digest": "83e0c0606c4f2ecf5de77dbf7af06631f4b30aca7d8a1a33d2311f13c843d556"
+      },
+      "transfer_blocked": true
+    }
+  ],
+  "seed_set": [
+    30,
+    31,
+    32,
+    33,
+    34
+  ],
+  "simulator": "deterministic_local_fault_injection"
+}
