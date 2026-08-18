@@ -6,9 +6,9 @@
     "successful": 128,
     "errors": 0,
     "p50_us": 2,
-    "p95_us": 3,
-    "p99_us": 4,
-    "throughput_ops_per_sec": 177126.5915446961
+    "p95_us": 2,
+    "p99_us": 5,
+    "throughput_ops_per_sec": 146090.20385290086
   },
   {
     "path": "quorum_read_index",
@@ -17,9 +17,9 @@
     "successful": 128,
     "errors": 0,
     "p50_us": 5,
-    "p95_us": 11,
-    "p99_us": 12,
-    "throughput_ops_per_sec": 129665.68539457874
+    "p95_us": 5,
+    "p99_us": 6,
+    "throughput_ops_per_sec": 164411.36236649603
   },
   {
     "path": "lease_fast_path",
@@ -27,21 +27,21 @@
     "operations": 256,
     "successful": 256,
     "errors": 0,
-    "p50_us": 5,
+    "p50_us": 12,
+    "p95_us": 30,
+    "p99_us": 167,
+    "throughput_ops_per_sec": 87238.20869969405
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 2,
+    "operations": 256,
+    "successful": 256,
+    "errors": 0,
+    "p50_us": 12,
     "p95_us": 13,
-    "p99_us": 48,
-    "throughput_ops_per_sec": 133669.59591054582
-  },
-  {
-    "path": "quorum_read_index",
-    "concurrency": 2,
-    "operations": 256,
-    "successful": 256,
-    "errors": 0,
-    "p50_us": 6,
-    "p95_us": 14,
-    "p99_us": 28,
-    "throughput_ops_per_sec": 106714.55482314355
+    "p99_us": 25,
+    "throughput_ops_per_sec": 93903.8087531555
   },
   {
     "path": "lease_fast_path",
@@ -50,9 +50,9 @@
     "successful": 512,
     "errors": 0,
     "p50_us": 13,
-    "p95_us": 176,
-    "p99_us": 599,
-    "throughput_ops_per_sec": 85017.97333092449
+    "p95_us": 87,
+    "p99_us": 723,
+    "throughput_ops_per_sec": 68358.81434840833
   },
   {
     "path": "quorum_read_index",
@@ -61,53 +61,53 @@
     "successful": 512,
     "errors": 0,
     "p50_us": 13,
-    "p95_us": 154,
-    "p99_us": 514,
-    "throughput_ops_per_sec": 75988.93589220138
+    "p95_us": 51,
+    "p99_us": 960,
+    "throughput_ops_per_sec": 72733.24429193193
   },
   {
     "path": "lease_fast_path",
     "concurrency": 8,
     "operations": 1024,
     "successful": 1024,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 186,
+    "p99_us": 1728,
+    "throughput_ops_per_sec": 77323.85169738314
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 8,
+    "operations": 1024,
+    "successful": 1024,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 168,
+    "p99_us": 1951,
+    "throughput_ops_per_sec": 74141.3343803866
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 16,
+    "operations": 2048,
+    "successful": 2048,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 387,
+    "p99_us": 3237,
+    "throughput_ops_per_sec": 78599.29908460984
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 16,
+    "operations": 2048,
+    "successful": 2048,
     "errors": 0,
     "p50_us": 13,
     "p95_us": 437,
-    "p99_us": 1811,
-    "throughput_ops_per_sec": 71403.98148321829
-  },
-  {
-    "path": "quorum_read_index",
-    "concurrency": 8,
-    "operations": 1024,
-    "successful": 1024,
-    "errors": 0,
-    "p50_us": 13,
-    "p95_us": 364,
-    "p99_us": 1786,
-    "throughput_ops_per_sec": 70462.88195664414
-  },
-  {
-    "path": "lease_fast_path",
-    "concurrency": 16,
-    "operations": 2048,
-    "successful": 2048,
-    "errors": 0,
-    "p50_us": 13,
-    "p95_us": 940,
-    "p99_us": 2911,
-    "throughput_ops_per_sec": 77028.0878709948
-  },
-  {
-    "path": "quorum_read_index",
-    "concurrency": 16,
-    "operations": 2048,
-    "successful": 2048,
-    "errors": 0,
-    "p50_us": 13,
-    "p95_us": 605,
-    "p99_us": 3200,
-    "throughput_ops_per_sec": 77521.64218394666
+    "p99_us": 3457,
+    "throughput_ops_per_sec": 74987.80075170143
   },
   {
     "path": "lease_fast_path",
@@ -116,9 +116,9 @@
     "successful": 4096,
     "errors": 0,
     "p50_us": 13,
-    "p95_us": 2147,
-    "p99_us": 5738,
-    "throughput_ops_per_sec": 76513.6481500089
+    "p95_us": 1571,
+    "p99_us": 5982,
+    "throughput_ops_per_sec": 78846.78264509935
   },
   {
     "path": "quorum_read_index",
@@ -127,8 +127,8 @@
     "successful": 4096,
     "errors": 0,
     "p50_us": 13,
-    "p95_us": 1935,
-    "p99_us": 6004,
-    "throughput_ops_per_sec": 74478.93339912307
+    "p95_us": 1799,
+    "p99_us": 5132,
+    "throughput_ops_per_sec": 82339.48178352544
   }
 ]

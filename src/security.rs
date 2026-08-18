@@ -21,6 +21,9 @@ const MAX_AUDIT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_AUDIT_EVENTS: usize = 100_000;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
 const MAX_IDENTIFIER_BYTES: usize = 256;
+const MAX_REMOTE_AUDIT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_REMOTE_AUDIT_TOKEN_BYTES: usize = 256;
+const MAX_REMOTE_AUDIT_PENDING: usize = 100_000;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SecurityError {
@@ -48,6 +51,12 @@ pub enum SecurityError {
     Serialization(String),
     #[error("audit metadata exceeds the configured bound")]
     MetadataTooLarge,
+    #[error("remote audit ordering gap: {0}")]
+    RemoteAuditGap(String),
+    #[error("remote audit envelope rejected: {0}")]
+    RemoteAuditRejected(String),
+    #[error("remote audit envelope collision: {0}")]
+    RemoteAuditCollision(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -150,7 +159,8 @@ impl MeshPolicy {
         if identity.trust_domain != self.trust_domain {
             return Err(SecurityError::InvalidPolicy(format!(
                 "identity '{}' is outside trust domain '{}'",
-                identity.spiffe_id(), self.trust_domain
+                identity.spiffe_id(),
+                self.trust_domain
             )));
         }
         Ok(())
@@ -281,7 +291,9 @@ impl AuditSignerStore {
         public_key: &[u8],
     ) -> Result<(), SecurityError> {
         validate_identifier(signer_id, "audit signer id")?;
-        let key: [u8; 32] = public_key.try_into().map_err(|_| SecurityError::InvalidSignature)?;
+        let key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
         if let Some(existing) = self.keys.get(signer_id) {
             if existing.public_key != key {
                 return Err(SecurityError::UntrustedSigner(format!(
@@ -358,10 +370,16 @@ impl AuditSignerStore {
     }
 
     pub fn is_revoked(&self, signer_id: &str) -> bool {
-        self.keys.get(signer_id).is_some_and(|signer| signer.revoked)
+        self.keys
+            .get(signer_id)
+            .is_some_and(|signer| signer.revoked)
     }
 
-    fn authorize_historical(&self, signer_id: &str, public_key: &[u8]) -> Result<(), SecurityError> {
+    fn authorize_historical(
+        &self,
+        signer_id: &str,
+        public_key: &[u8],
+    ) -> Result<(), SecurityError> {
         let trusted = self
             .keys
             .get(signer_id)
@@ -390,7 +408,12 @@ impl AuditSignerStore {
             .map_err(|error| SecurityError::Persistence(error.to_string()))?;
         let bytes = serde_json::to_vec_pretty(self)
             .map_err(|error| SecurityError::Serialization(error.to_string()))?;
-        let temporary = parent.join(format!(".{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("signers")));
+        let temporary = parent.join(format!(
+            ".{}.tmp",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("signers")
+        ));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -411,7 +434,8 @@ impl AuditSignerStore {
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, SecurityError> {
-        let bytes = fs::read(path).map_err(|error| SecurityError::Persistence(error.to_string()))?;
+        let bytes =
+            fs::read(path).map_err(|error| SecurityError::Persistence(error.to_string()))?;
         let store: Self = serde_json::from_slice(&bytes)
             .map_err(|error| SecurityError::Serialization(error.to_string()))?;
         for (signer_id, signer) in &store.keys {
@@ -499,6 +523,402 @@ impl AuditRecord {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteAuditEnvelope {
+    pub cluster_id: String,
+    pub source_node_id: String,
+    pub stream_id: String,
+    pub source_sequence: u64,
+    pub previous_hash: String,
+    pub record_hash: String,
+    pub signer_id: String,
+    pub record_bytes: Vec<u8>,
+    pub envelope_hash: String,
+    pub signature: Vec<u8>,
+    pub public_key: Vec<u8>,
+}
+
+impl RemoteAuditEnvelope {
+    pub fn from_record(
+        cluster_id: &str,
+        source_node_id: &str,
+        stream_id: &str,
+        record: &AuditRecord,
+        signing_key: &SigningKey,
+    ) -> Result<Self, SecurityError> {
+        validate_identifier(cluster_id, "remote audit cluster id")?;
+        validate_identifier(source_node_id, "remote audit source node id")?;
+        validate_identifier(stream_id, "remote audit stream id")?;
+        if record.sequence == 0 || record.record_hash.is_empty() {
+            return Err(SecurityError::RemoteAuditRejected(
+                "record must have a positive sequence and hash".into(),
+            ));
+        }
+        let record_bytes = serde_json::to_vec(record)
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+        if record_bytes.len() > MAX_REMOTE_AUDIT_BYTES {
+            return Err(SecurityError::RemoteAuditRejected(
+                "record bytes exceed remote audit bound".into(),
+            ));
+        }
+        let public_key = signing_key.verifying_key().to_bytes().to_vec();
+        let mut envelope = Self {
+            cluster_id: cluster_id.to_string(),
+            source_node_id: source_node_id.to_string(),
+            stream_id: stream_id.to_string(),
+            source_sequence: record.sequence,
+            previous_hash: record.previous_hash.clone(),
+            record_hash: record.record_hash.clone(),
+            signer_id: record.signer_id.clone(),
+            record_bytes,
+            envelope_hash: String::new(),
+            signature: Vec::new(),
+            public_key,
+        };
+        let payload = envelope.signing_payload()?;
+        envelope.envelope_hash = hex_digest(&payload);
+        envelope.signature = signing_key.sign(&payload).to_bytes().to_vec();
+        Ok(envelope)
+    }
+
+    fn signing_payload(&self) -> Result<Vec<u8>, SecurityError> {
+        serde_json::to_vec(&(
+            &self.cluster_id,
+            &self.source_node_id,
+            &self.stream_id,
+            self.source_sequence,
+            &self.previous_hash,
+            &self.record_hash,
+            &self.signer_id,
+            &self.record_bytes,
+            &self.public_key,
+        ))
+        .map_err(|error| SecurityError::Serialization(error.to_string()))
+    }
+
+    pub fn validate(
+        &self,
+        cluster_id: &str,
+        trusted_signers: &AuditSignerStore,
+    ) -> Result<(), SecurityError> {
+        validate_identifier(cluster_id, "remote audit cluster id")?;
+        if self.cluster_id != cluster_id {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote audit cluster mismatch".into(),
+            ));
+        }
+        validate_identifier(&self.source_node_id, "remote audit source node id")?;
+        validate_identifier(&self.stream_id, "remote audit stream id")?;
+        validate_identifier(&self.signer_id, "remote audit signer id")?;
+        if self.source_sequence == 0
+            || !is_hex_digest(&self.previous_hash) && !self.previous_hash.is_empty()
+            || !is_hex_digest(&self.record_hash)
+            || self.record_bytes.len() > MAX_REMOTE_AUDIT_BYTES
+        {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote audit envelope fields are malformed".into(),
+            ));
+        }
+        trusted_signers.authorize_historical(&self.signer_id, &self.public_key)?;
+        let payload = self.signing_payload()?;
+        if hex_digest(&payload) != self.envelope_hash {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote audit envelope hash mismatch".into(),
+            ));
+        }
+        let public_key: [u8; 32] = self
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
+        let signature: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
+        VerifyingKey::from_bytes(&public_key)
+            .map_err(|_| SecurityError::InvalidSignature)?
+            .verify(&payload, &Signature::from_bytes(&signature))
+            .map_err(|_| SecurityError::InvalidSignature)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RemoteAuditDecision {
+    Accepted,
+    AlreadyAccepted,
+    AwaitingPredecessor,
+    RetryableFailure,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteAuditAcknowledgement {
+    pub cluster_id: String,
+    pub sink_id: String,
+    pub envelope_hash: String,
+    pub source_sequence: u64,
+    pub decision: RemoteAuditDecision,
+    pub next_expected_sequence: u64,
+    pub order_token: Option<String>,
+    pub acknowledgement_hash: String,
+    pub signature: Vec<u8>,
+    pub public_key: Vec<u8>,
+}
+
+impl RemoteAuditAcknowledgement {
+    pub fn new(
+        cluster_id: &str,
+        sink_id: &str,
+        envelope: &RemoteAuditEnvelope,
+        decision: RemoteAuditDecision,
+        next_expected_sequence: u64,
+        order_token: Option<&str>,
+        signing_key: &SigningKey,
+    ) -> Result<Self, SecurityError> {
+        validate_identifier(cluster_id, "remote audit cluster id")?;
+        validate_identifier(sink_id, "remote audit sink id")?;
+        if let Some(token) = order_token {
+            if token.is_empty()
+                || token.len() > MAX_REMOTE_AUDIT_TOKEN_BYTES
+                || token.chars().any(char::is_control)
+            {
+                return Err(SecurityError::RemoteAuditRejected(
+                    "remote audit order token is out of bounds".into(),
+                ));
+            }
+        }
+        let public_key = signing_key.verifying_key().to_bytes().to_vec();
+        let mut acknowledgement = Self {
+            cluster_id: cluster_id.to_string(),
+            sink_id: sink_id.to_string(),
+            envelope_hash: envelope.envelope_hash.clone(),
+            source_sequence: envelope.source_sequence,
+            decision,
+            next_expected_sequence,
+            order_token: order_token.map(str::to_string),
+            acknowledgement_hash: String::new(),
+            signature: Vec::new(),
+            public_key,
+        };
+        let payload = acknowledgement.signing_payload()?;
+        acknowledgement.acknowledgement_hash = hex_digest(&payload);
+        acknowledgement.signature = signing_key.sign(&payload).to_bytes().to_vec();
+        Ok(acknowledgement)
+    }
+
+    fn signing_payload(&self) -> Result<Vec<u8>, SecurityError> {
+        serde_json::to_vec(&(
+            &self.cluster_id,
+            &self.sink_id,
+            &self.envelope_hash,
+            self.source_sequence,
+            &self.decision,
+            self.next_expected_sequence,
+            &self.order_token,
+            &self.public_key,
+        ))
+        .map_err(|error| SecurityError::Serialization(error.to_string()))
+    }
+
+    pub fn validate(
+        &self,
+        cluster_id: &str,
+        trusted_sink: &AuditSignerStore,
+        envelope: &RemoteAuditEnvelope,
+    ) -> Result<(), SecurityError> {
+        if self.cluster_id != cluster_id
+            || self.envelope_hash != envelope.envelope_hash
+            || self.source_sequence != envelope.source_sequence
+        {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote acknowledgement does not bind to envelope".into(),
+            ));
+        }
+        validate_identifier(&self.sink_id, "remote audit sink id")?;
+        if self.next_expected_sequence == 0
+            || self.order_token.as_ref().is_some_and(|token| {
+                token.is_empty()
+                    || token.len() > MAX_REMOTE_AUDIT_TOKEN_BYTES
+                    || token.chars().any(char::is_control)
+            })
+        {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote acknowledgement fields are malformed".into(),
+            ));
+        }
+        trusted_sink.authorize_historical(&self.sink_id, &self.public_key)?;
+        let payload = self.signing_payload()?;
+        if hex_digest(&payload) != self.acknowledgement_hash {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote acknowledgement hash mismatch".into(),
+            ));
+        }
+        let public_key: [u8; 32] = self
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
+        let signature: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| SecurityError::InvalidSignature)?;
+        VerifyingKey::from_bytes(&public_key)
+            .map_err(|_| SecurityError::InvalidSignature)?
+            .verify(&payload, &Signature::from_bytes(&signature))
+            .map_err(|_| SecurityError::InvalidSignature)
+    }
+}
+
+#[derive(Clone)]
+pub struct DurableRemoteAuditSink {
+    directory: PathBuf,
+    cluster_id: String,
+    trusted_signers: AuditSignerStore,
+    trusted_sink_signers: AuditSignerStore,
+}
+
+impl DurableRemoteAuditSink {
+    pub fn open(
+        directory: impl AsRef<Path>,
+        cluster_id: &str,
+        trusted_signers: AuditSignerStore,
+        trusted_sink_signers: AuditSignerStore,
+    ) -> Result<Self, SecurityError> {
+        validate_identifier(cluster_id, "remote audit cluster id")?;
+        let directory = directory.as_ref().to_path_buf();
+        fs::create_dir_all(&directory)
+            .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+        Ok(Self {
+            directory,
+            cluster_id: cluster_id.to_string(),
+            trusted_signers,
+            trusted_sink_signers,
+        })
+    }
+
+    pub fn enqueue(&self, envelope: &RemoteAuditEnvelope) -> Result<(), SecurityError> {
+        envelope.validate(&self.cluster_id, &self.trusted_signers)?;
+        let pending_envelopes = self.pending()?;
+        if pending_envelopes.len() >= MAX_REMOTE_AUDIT_PENDING {
+            return Err(SecurityError::RemoteAuditRejected(
+                "remote audit outbox exceeds the pending-entry bound".into(),
+            ));
+        }
+        for pending in pending_envelopes {
+            if pending.stream_id == envelope.stream_id
+                && pending.source_sequence == envelope.source_sequence
+                && pending.envelope_hash != envelope.envelope_hash
+            {
+                return Err(SecurityError::RemoteAuditCollision(
+                    "same stream sequence has a different envelope hash".into(),
+                ));
+            }
+        }
+        let path = self
+            .directory
+            .join(format!("{}.json", envelope.envelope_hash));
+        let bytes = serde_json::to_vec(envelope)
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+        if bytes.len() > MAX_REMOTE_AUDIT_BYTES {
+            return Err(SecurityError::RemoteAuditRejected(
+                "outbox entry exceeds remote audit bound".into(),
+            ));
+        }
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .and_then(|_| file.sync_all())
+                    .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = fs::read(&path)
+                    .map_err(|read_error| SecurityError::SinkPersistence(read_error.to_string()))?;
+                if existing == bytes {
+                    Ok(())
+                } else {
+                    Err(SecurityError::RemoteAuditCollision(
+                        "envelope hash collides with different bytes".into(),
+                    ))
+                }
+            }
+            Err(error) => Err(SecurityError::SinkPersistence(error.to_string())),
+        }
+    }
+
+    pub fn pending(&self) -> Result<Vec<RemoteAuditEnvelope>, SecurityError> {
+        let mut envelopes = Vec::new();
+        for entry in fs::read_dir(&self.directory)
+            .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?
+        {
+            let entry = entry.map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+            if !entry
+                .file_type()
+                .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?
+                .is_file()
+            {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let envelope: RemoteAuditEnvelope = serde_json::from_slice(
+                &fs::read(&path)
+                    .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?,
+            )
+            .map_err(|error| SecurityError::Serialization(error.to_string()))?;
+            envelope.validate(&self.cluster_id, &self.trusted_signers)?;
+            envelopes.push(envelope);
+        }
+        envelopes.sort_by(|left, right| {
+            left.stream_id
+                .cmp(&right.stream_id)
+                .then(left.source_sequence.cmp(&right.source_sequence))
+                .then(left.envelope_hash.cmp(&right.envelope_hash))
+        });
+        Ok(envelopes)
+    }
+
+    pub fn replay_pending(&self) -> Result<Vec<RemoteAuditEnvelope>, SecurityError> {
+        self.pending()
+    }
+
+    pub fn acknowledge(
+        &self,
+        acknowledgement: &RemoteAuditAcknowledgement,
+    ) -> Result<bool, SecurityError> {
+        let envelope = self
+            .pending()?
+            .into_iter()
+            .find(|envelope| envelope.envelope_hash == acknowledgement.envelope_hash)
+            .ok_or_else(|| {
+                SecurityError::RemoteAuditRejected("acknowledgement has no pending envelope".into())
+            })?;
+        acknowledgement.validate(&self.cluster_id, &self.trusted_sink_signers, &envelope)?;
+        match acknowledgement.decision {
+            RemoteAuditDecision::Accepted | RemoteAuditDecision::AlreadyAccepted => {
+                let path = self
+                    .directory
+                    .join(format!("{}.json", envelope.envelope_hash));
+                fs::remove_file(&path)
+                    .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+                if let Ok(directory) = OpenOptions::new().read(true).open(&self.directory) {
+                    directory
+                        .sync_all()
+                        .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
+                }
+                Ok(true)
+            }
+            RemoteAuditDecision::AwaitingPredecessor
+            | RemoteAuditDecision::RetryableFailure
+            | RemoteAuditDecision::Rejected => Ok(false),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AuditState {
     next_sequence: u64,
@@ -532,13 +952,18 @@ impl DurableFileAuditSink {
             .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?
         {
             let entry = entry.map_err(|error| SecurityError::SinkPersistence(error.to_string()))?;
-            if entry.file_type().map_err(|error| SecurityError::SinkPersistence(error.to_string()))?.is_file() {
+            if entry
+                .file_type()
+                .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?
+                .is_file()
+            {
                 let path = entry.path();
                 if path.extension().and_then(|value| value.to_str()) != Some("json") {
                     continue;
                 }
                 let record: AuditRecord = serde_json::from_slice(
-                    &fs::read(&path).map_err(|error| SecurityError::SinkPersistence(error.to_string()))?,
+                    &fs::read(&path)
+                        .map_err(|error| SecurityError::SinkPersistence(error.to_string()))?,
                 )
                 .map_err(|error| SecurityError::Serialization(error.to_string()))?;
                 records.push(record);
@@ -865,7 +1290,9 @@ impl AuditLog {
 fn validate_segment(value: &str, label: &str) -> Result<(), SecurityError> {
     if value.trim().is_empty()
         || value.len() > MAX_IDENTIFIER_BYTES
-        || value.chars().any(|character| character.is_control() || character == '/')
+        || value
+            .chars()
+            .any(|character| character.is_control() || character == '/')
     {
         return Err(SecurityError::InvalidIdentity(format!(
             "{} must be 1 to {} bytes and contain no controls or slashes",
@@ -927,7 +1354,11 @@ mod tests {
         )
     }
 
-    fn mesh_request(source: MeshIdentity, destination: MeshIdentity, fingerprint: &str) -> MeshRequest {
+    fn mesh_request(
+        source: MeshIdentity,
+        destination: MeshIdentity,
+        fingerprint: &str,
+    ) -> MeshRequest {
         MeshRequest {
             request_id: "req-1".into(),
             audience: destination.spiffe_id(),
@@ -967,14 +1398,23 @@ mod tests {
         let directory = tempdir().unwrap();
         let (audit, _) = audit_setup(&directory.path().join("audit.jsonl"));
         let allowed = mesh
-            .authorize_and_audit(&mesh_request(source.clone(), destination.clone(), &fingerprint), &audit)
+            .authorize_and_audit(
+                &mesh_request(source.clone(), destination.clone(), &fingerprint),
+                &audit,
+            )
             .unwrap();
         assert!(allowed.allowed);
         let mut denied_request = mesh_request(source, destination, &fingerprint);
         denied_request.audience = "spiffe://cluster.local/ns/other/sa/service".into();
         let denied = mesh.authorize_and_audit(&denied_request, &audit).unwrap();
         assert!(!denied.allowed);
-        assert_eq!(std::fs::read_to_string(audit.path()).unwrap().lines().count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(audit.path())
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -983,18 +1423,42 @@ mod tests {
         let path = directory.path().join("audit.jsonl");
         let (audit, signing_key) = audit_setup(&path);
         audit
-            .append("consensus_commit", "node-a", "state/feature", "allow", &serde_json::json!({"index": 1}))
+            .append(
+                "consensus_commit",
+                "node-a",
+                "state/feature",
+                "allow",
+                &serde_json::json!({"index": 1}),
+            )
             .unwrap();
         audit
-            .append("consensus_snapshot", "node-a", "state", "allow", &serde_json::json!({"index": 1}))
+            .append(
+                "consensus_snapshot",
+                "node-a",
+                "state",
+                "allow",
+                &serde_json::json!({"index": 1}),
+            )
             .unwrap();
         let mut trusted = AuditSignerStore::default();
         trusted
             .trust_public_key("operator:mesh", &signing_key.verifying_key().to_bytes())
             .unwrap();
-        let reopened = AuditLog::open_with_signer(&path, "operator:mesh", signing_key.clone(), trusted.clone()).unwrap();
+        let reopened = AuditLog::open_with_signer(
+            &path,
+            "operator:mesh",
+            signing_key.clone(),
+            trusted.clone(),
+        )
+        .unwrap();
         let third = reopened
-            .append("consensus_commit", "node-a", "state/feature", "allow", &serde_json::json!({"index": 2}))
+            .append(
+                "consensus_commit",
+                "node-a",
+                "state/feature",
+                "allow",
+                &serde_json::json!({"index": 2}),
+            )
             .unwrap();
         assert_eq!(third.sequence, 3);
 

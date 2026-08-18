@@ -85,6 +85,8 @@ def main() -> None:
             "failure_detector_boundaries": "passed",
             "replication_flow_control": "passed",
             "replication_backpressure_boundaries": "passed",
+            "remote_audit_ordering": "passed",
+            "remote_audit_outbox_durability": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -104,6 +106,14 @@ def main() -> None:
             "higher_term_clears_windows": True,
             "clock_uncertainty_blocks_sends": True,
             "transport_or_background_threads": False,
+        },
+        "phase17_remote_audit": {
+            "envelope_signature_binding": True,
+            "per_stream_sequence_order": True,
+            "idempotent_enqueue": True,
+            "gap_and_retry_retention": True,
+            "accepted_ack_removes_and_syncs_directory": True,
+            "transport_or_sink_quorum": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,
