@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "cluster_mutation_performed": false,
   "failures": [],
-  "gate_count": 52,
+  "gate_count": 56,
   "phase24_evidence_checked": [
     "per_peer_send_isolation",
     "exact_frame_byte_admission",
@@ -20,6 +20,15 @@
     "epoch_mismatch_rejected",
     "persistence_failure_rolls_back"
   ],
+  "phase26_crash_points_retaining_queue": 4,
+  "phase26_evidence_checked": [
+    "authenticated_payload_reverified_before_send",
+    "one_active_delivery_per_peer",
+    "ack_only_after_flush",
+    "restart_retry_after_crash",
+    "tampered_payload_fails_closed",
+    "durable_delivery_metrics_non_secret"
+  ],
   "result": "passed",
   "runtime_metric_contract": [
     "in_flight_bytes",
@@ -30,7 +39,10 @@
     "backpressured_receives",
     "durable_queue_frames",
     "durable_queue_bytes",
-    "next_queue_sequence"
+    "next_queue_sequence",
+    "durable_delivery_attempts",
+    "durable_delivery_failures",
+    "injected_delivery_crashes"
   ],
   "runtime_payload_boundary": "deployment_boundary",
   "runtime_payloads_persisted_in_artifact": false,
