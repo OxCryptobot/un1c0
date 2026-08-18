@@ -29,6 +29,7 @@ const MAX_READ_ROUNDS: usize = 1_024;
 const MAX_COMPLETED_READ_REQUESTS: usize = 4_096;
 const MAX_LEASE_TICKS: u64 = 86_400_000;
 const MAX_ELECTION_TICKS: u64 = 86_400_000;
+const MAX_REPLICATION_BATCH_BYTES: usize = 512 * 1024;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -95,6 +96,8 @@ pub enum ConsensusError {
     InvalidElectionTimer(String),
     #[error("peer is not an accepted consensus member: {0}")]
     InvalidPeer(String),
+    #[error("replication flow-control violation: {0}")]
+    ReplicationFlowControl(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +246,141 @@ pub struct AppendResponse {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplicationFlowConfig {
+    pub max_entries_per_batch: usize,
+    pub max_batch_bytes: usize,
+    pub retry_backoff_ticks: u64,
+}
+
+impl Default for ReplicationFlowConfig {
+    fn default() -> Self {
+        Self {
+            max_entries_per_batch: MAX_BATCH_ENTRIES,
+            max_batch_bytes: MAX_REPLICATION_BATCH_BYTES,
+            retry_backoff_ticks: 25,
+        }
+    }
+}
+
+impl ReplicationFlowConfig {
+    pub fn new(
+        max_entries_per_batch: usize,
+        max_batch_bytes: usize,
+        retry_backoff_ticks: u64,
+    ) -> Result<Self, ConsensusError> {
+        let config = Self {
+            max_entries_per_batch,
+            max_batch_bytes,
+            retry_backoff_ticks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.max_entries_per_batch == 0 || self.max_entries_per_batch > MAX_BATCH_ENTRIES {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "entries per batch must be between 1 and MAX_BATCH_ENTRIES".into(),
+            ));
+        }
+        if self.max_batch_bytes == 0 || self.max_batch_bytes > MAX_REPLICATION_BATCH_BYTES {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "batch bytes must be positive and bounded".into(),
+            ));
+        }
+        if self.retry_backoff_ticks == 0 || self.retry_backoff_ticks > MAX_ELECTION_TICKS {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "retry backoff must be positive and bounded".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplicationBatch {
+    pub batch_id: u64,
+    pub term: u64,
+    pub leader_id: String,
+    pub follower_id: String,
+    pub request: AppendEntries,
+}
+
+impl ReplicationBatch {
+    pub fn validate(&self, config: &ReplicationFlowConfig) -> Result<(), ConsensusError> {
+        config.validate()?;
+        validate_node_id(&self.leader_id)?;
+        validate_node_id(&self.follower_id)?;
+        if self.batch_id == 0 || self.term == 0 {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "batch ID and term must be positive".into(),
+            ));
+        }
+        if self.request.term != self.term
+            || self.request.leader_id != self.leader_id
+            || self.request.entries.len() > config.max_entries_per_batch
+        {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "batch metadata does not match bounded append request".into(),
+            ));
+        }
+        if self.request.entries.is_empty() {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "replication batches must contain at least one entry".into(),
+            ));
+        }
+        let bytes = serde_json::to_vec(self)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() > config.max_batch_bytes {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "serialized replication batch exceeds byte bound".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplicationBatchAck {
+    pub batch_id: u64,
+    pub follower_id: String,
+    pub response: AppendResponse,
+}
+
+impl ReplicationBatchAck {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.follower_id)?;
+        if self.batch_id == 0
+            || self.response.term == 0
+            || self.response.follower_id != self.follower_id
+        {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "acknowledgement metadata is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplicationFlowAction {
+    Idle,
+    Backpressured { retry_at_tick: Option<u64> },
+    Send(ReplicationBatch),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplicationWindowStatus {
+    pub follower_id: String,
+    pub in_flight_batch_id: Option<u64>,
+    pub last_completed_batch_id: Option<u64>,
+    pub retry_at_tick: Option<u64>,
+    pub sent_batches: u64,
+    pub acknowledged_batches: u64,
+    pub rejected_batches: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LeaderLeaseConfig {
     pub lease_ticks: u64,
     pub max_clock_drift_ticks: u64,
@@ -363,6 +501,8 @@ pub enum ConsensusMessage {
     StateDelta(StateDelta),
     ReadIndexRequest(ReadIndexRequest),
     ReadIndexResponse(ReadIndexResponse),
+    ReplicationBatch(ReplicationBatch),
+    ReplicationBatchAck(ReplicationBatchAck),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1244,6 +1384,17 @@ impl DurableSnapshotStore {
 }
 
 #[derive(Debug, Clone)]
+struct PeerReplicationFlow {
+    next_batch_id: u64,
+    in_flight: Option<u64>,
+    last_completed: Option<u64>,
+    retry_at_tick: Option<u64>,
+    sent_batches: u64,
+    acknowledged_batches: u64,
+    rejected_batches: u64,
+}
+
+#[derive(Debug, Clone)]
 struct ReadIndexRound {
     request_id: String,
     key: String,
@@ -1278,8 +1429,24 @@ pub struct ConsensusNode {
     election_deadline_tick: Option<u64>,
     heartbeat_due_tick: Option<u64>,
     peer_last_heartbeat_tick: BTreeMap<String, u64>,
+    replication_flow_config: ReplicationFlowConfig,
+    peer_replication_flow: BTreeMap<String, PeerReplicationFlow>,
     read_rounds: BTreeMap<String, ReadIndexRound>,
     completed_read_requests: BTreeSet<String>,
+}
+
+impl PeerReplicationFlow {
+    fn new() -> Self {
+        Self {
+            next_batch_id: 1,
+            in_flight: None,
+            last_completed: None,
+            retry_at_tick: None,
+            sent_batches: 0,
+            acknowledged_batches: 0,
+            rejected_batches: 0,
+        }
+    }
 }
 
 impl ConsensusNode {
@@ -1327,6 +1494,8 @@ impl ConsensusNode {
             election_deadline_tick: None,
             heartbeat_due_tick: None,
             peer_last_heartbeat_tick: BTreeMap::new(),
+            replication_flow_config: ReplicationFlowConfig::default(),
+            peer_replication_flow: BTreeMap::new(),
             read_rounds: BTreeMap::new(),
             completed_read_requests: BTreeSet::new(),
         })
@@ -2061,19 +2230,164 @@ impl ConsensusNode {
         })
     }
 
-    pub fn append_entries_for(&self, follower_id: &str) -> Result<AppendEntries, ConsensusError> {
+    pub fn configure_replication_flow(
+        &mut self,
+        config: ReplicationFlowConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.replication_flow_config = config;
+        self.peer_replication_flow.clear();
+        Ok(())
+    }
+
+    pub fn replication_flow_config(&self) -> ReplicationFlowConfig {
+        self.replication_flow_config
+    }
+
+    pub fn replication_window_status(
+        &self,
+        follower_id: &str,
+    ) -> Result<ReplicationWindowStatus, ConsensusError> {
+        self.validate_replication_peer(follower_id)?;
+        let flow = self
+            .peer_replication_flow
+            .get(follower_id)
+            .cloned()
+            .unwrap_or_else(PeerReplicationFlow::new);
+        Ok(ReplicationWindowStatus {
+            follower_id: follower_id.to_string(),
+            in_flight_batch_id: flow.in_flight,
+            last_completed_batch_id: flow.last_completed,
+            retry_at_tick: flow.retry_at_tick,
+            sent_batches: flow.sent_batches,
+            acknowledged_batches: flow.acknowledged_batches,
+            rejected_batches: flow.rejected_batches,
+        })
+    }
+
+    pub fn prepare_flow_controlled_replication(
+        &mut self,
+        follower_id: &str,
+        now_tick: u64,
+    ) -> Result<ReplicationFlowAction, ConsensusError> {
         if self.role != ConsensusRole::Leader {
             return Err(ConsensusError::NotLeader);
         }
-        validate_node_id(follower_id)?;
-        if !self.accepted_members().contains(follower_id) {
-            return Err(ConsensusError::UnknownMember(follower_id.to_string()));
+        self.validate_replication_peer(follower_id)?;
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
         }
-        if follower_id == self.id {
-            return Err(ConsensusError::InvalidMessage(
-                "leader cannot replicate to itself".into(),
+        if let Some(flow) = self.peer_replication_flow.get(follower_id) {
+            if flow.in_flight.is_some()
+                || flow
+                    .retry_at_tick
+                    .is_some_and(|retry_at| now_tick < retry_at)
+            {
+                return Ok(ReplicationFlowAction::Backpressured {
+                    retry_at_tick: flow.retry_at_tick,
+                });
+            }
+        }
+        let request = self.append_entries_for_with_limits(
+            follower_id,
+            self.replication_flow_config.max_entries_per_batch,
+        )?;
+        if request.entries.is_empty() {
+            return Ok(ReplicationFlowAction::Idle);
+        }
+        let batch_id = self
+            .peer_replication_flow
+            .get(follower_id)
+            .map(|flow| flow.next_batch_id)
+            .unwrap_or(1);
+        let next_batch_id = batch_id
+            .checked_add(1)
+            .ok_or_else(|| ConsensusError::ReplicationFlowControl("batch ID overflow".into()))?;
+        let batch = ReplicationBatch {
+            batch_id,
+            term: self.current_term,
+            leader_id: self.id.clone(),
+            follower_id: follower_id.to_string(),
+            request,
+        };
+        batch.validate(&self.replication_flow_config)?;
+        let flow = self
+            .peer_replication_flow
+            .entry(follower_id.to_string())
+            .or_insert_with(PeerReplicationFlow::new);
+        flow.next_batch_id = next_batch_id;
+        flow.in_flight = Some(batch_id);
+        flow.retry_at_tick = None;
+        flow.sent_batches = flow.sent_batches.saturating_add(1);
+        Ok(ReplicationFlowAction::Send(batch))
+    }
+
+    pub fn acknowledge_flow_controlled_replication(
+        &mut self,
+        acknowledgement: ReplicationBatchAck,
+        now_tick: u64,
+    ) -> Result<bool, ConsensusError> {
+        acknowledgement.validate()?;
+        self.validate_replication_peer(&acknowledgement.follower_id)?;
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        let Some(flow) = self.peer_replication_flow.get(&acknowledgement.follower_id) else {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "acknowledgement has no active peer window".into(),
+            ));
+        };
+        if flow.in_flight != Some(acknowledgement.batch_id) {
+            return Err(ConsensusError::ReplicationFlowControl(
+                "acknowledgement does not match the active batch".into(),
             ));
         }
+        let committed = self.acknowledge_append(acknowledgement.response.clone())?;
+        if self.role != ConsensusRole::Leader || acknowledgement.response.term != self.current_term
+        {
+            return Ok(committed);
+        }
+        let flow = self
+            .peer_replication_flow
+            .get_mut(&acknowledgement.follower_id)
+            .ok_or_else(|| {
+                ConsensusError::ReplicationFlowControl(
+                    "peer flow disappeared during acknowledgement".into(),
+                )
+            })?;
+        flow.in_flight = None;
+        if acknowledgement.response.success {
+            flow.last_completed = Some(acknowledgement.batch_id);
+            flow.retry_at_tick = None;
+            flow.acknowledged_batches = flow.acknowledged_batches.saturating_add(1);
+        } else {
+            flow.retry_at_tick = Some(
+                now_tick
+                    .checked_add(self.replication_flow_config.retry_backoff_ticks)
+                    .ok_or_else(|| {
+                        ConsensusError::ReplicationFlowControl("retry deadline overflow".into())
+                    })?,
+            );
+            flow.rejected_batches = flow.rejected_batches.saturating_add(1);
+        }
+        Ok(committed)
+    }
+
+    pub fn append_entries_for(&self, follower_id: &str) -> Result<AppendEntries, ConsensusError> {
+        self.append_entries_for_with_limits(follower_id, MAX_BATCH_ENTRIES)
+    }
+
+    fn append_entries_for_with_limits(
+        &self,
+        follower_id: &str,
+        max_entries: usize,
+    ) -> Result<AppendEntries, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.validate_replication_peer(follower_id)?;
         let next_index = self
             .replication_progress
             .get(follower_id)
@@ -2095,7 +2409,7 @@ impl ConsensusNode {
             .get(start..)
             .unwrap_or_default()
             .iter()
-            .take(MAX_BATCH_ENTRIES)
+            .take(max_entries)
             .cloned()
             .collect();
         Ok(AppendEntries {
@@ -2105,6 +2419,25 @@ impl ConsensusNode {
             prev_log_term,
             entries,
             leader_commit: self.commit_index,
+        })
+    }
+
+    pub fn handle_replication_batch(
+        &mut self,
+        batch: ReplicationBatch,
+    ) -> Result<ReplicationBatchAck, ConsensusError> {
+        batch.validate(&self.replication_flow_config)?;
+        if batch.follower_id != self.id {
+            return Err(ConsensusError::InvalidPeer(batch.follower_id));
+        }
+        if !self.accepted_members().contains(&batch.leader_id) {
+            return Err(ConsensusError::UnknownMember(batch.leader_id));
+        }
+        let response = self.handle_append_entries(batch.request)?;
+        Ok(ReplicationBatchAck {
+            batch_id: batch.batch_id,
+            follower_id: self.id.clone(),
+            response,
         })
     }
 
@@ -2274,6 +2607,17 @@ impl ConsensusNode {
         }
     }
 
+    fn validate_replication_peer(&self, follower_id: &str) -> Result<(), ConsensusError> {
+        validate_node_id(follower_id)?;
+        if !self.accepted_members().contains(follower_id) {
+            return Err(ConsensusError::InvalidPeer(follower_id.to_string()));
+        }
+        if follower_id == self.id {
+            return Err(ConsensusError::InvalidPeer(follower_id.to_string()));
+        }
+        Ok(())
+    }
+
     fn accepted_members(&self) -> BTreeSet<String> {
         let mut members = self.members.clone();
         if let Some(previous) = &self.previous_members {
@@ -2303,6 +2647,17 @@ impl ConsensusNode {
         }
         self.replication_progress
             .insert(self.id.clone(), self.log.len() as u64);
+        let accepted_members = self.accepted_members();
+        let local_id = self.id.clone();
+        self.peer_replication_flow
+            .retain(|member, _| member != &local_id && accepted_members.contains(member));
+        for member in accepted_members {
+            if member != local_id {
+                self.peer_replication_flow
+                    .entry(member)
+                    .or_insert_with(PeerReplicationFlow::new);
+            }
+        }
     }
 
     fn last_log_position(&self) -> (u64, u64) {
@@ -2373,6 +2728,7 @@ impl ConsensusNode {
         self.role = ConsensusRole::Follower;
         self.invalidate_lease();
         self.heartbeat_due_tick = None;
+        self.peer_replication_flow.clear();
         self.read_rounds.clear();
     }
 
@@ -2409,6 +2765,8 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::StateDelta(value) => value.term,
         ConsensusMessage::ReadIndexRequest(value) => value.term,
         ConsensusMessage::ReadIndexResponse(value) => value.term,
+        ConsensusMessage::ReplicationBatch(value) => value.term,
+        ConsensusMessage::ReplicationBatchAck(value) => value.response.term,
     }
 }
 

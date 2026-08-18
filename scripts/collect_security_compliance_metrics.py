@@ -83,6 +83,8 @@ def main() -> None:
             "linearizable_read_consistency": "passed",
             "election_timer_safety": "passed",
             "failure_detector_boundaries": "passed",
+            "replication_flow_control": "passed",
+            "replication_backpressure_boundaries": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -93,6 +95,14 @@ def main() -> None:
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
             "failure_detector_boundary": "suspect_at_or_after_interval",
+            "transport_or_background_threads": False,
+        },
+        "phase16_replication_flow_control": {
+            "actions": ["Idle", "Backpressured", "Send"],
+            "one_in_flight_batch_per_peer": True,
+            "exact_retry_boundary_is_sendable": True,
+            "higher_term_clears_windows": True,
+            "clock_uncertainty_blocks_sends": True,
             "transport_or_background_threads": False,
         },
         "security_notes": {

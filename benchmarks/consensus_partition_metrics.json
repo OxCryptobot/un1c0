@@ -16,8 +16,8 @@
       "messages_verified": 10000,
       "name": "healthy",
       "quorum_available": true,
-      "verification_p95_us": 39.61,
-      "verification_throughput_ops_per_sec": 27261.737768831634
+      "verification_p95_us": 37.086,
+      "verification_throughput_ops_per_sec": 27409.735308106207
     },
     {
       "cluster_size": 5,
@@ -27,8 +27,8 @@
       "messages_verified": 3600,
       "name": "majority_partition",
       "quorum_available": true,
-      "verification_p95_us": 36.194,
-      "verification_throughput_ops_per_sec": 27250.151760636803
+      "verification_p95_us": 36.014,
+      "verification_throughput_ops_per_sec": 27304.278400672112
     },
     {
       "cluster_size": 5,
@@ -38,8 +38,8 @@
       "messages_verified": 1600,
       "name": "minority_partition",
       "quorum_available": false,
-      "verification_p95_us": 36.104,
-      "verification_throughput_ops_per_sec": 27320.038594335496
+      "verification_p95_us": 36.064,
+      "verification_throughput_ops_per_sec": 27365.79757283508
     }
   ]
 }

@@ -8,12 +8,12 @@ The run contains **16,128 total measured reads**, split evenly between both path
 
 | Concurrency | Lease p50/p95/p99 (µs) | Quorum p50/p95/p99 (µs) | Lease throughput | Quorum throughput | Throughput ratio | p95 delta | Interpretation |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| 1 | 2/3/4 | 5/6/7 | 160,879.41 | 147,126.78 | 1.09× | -50.0% | Paths are near parity; scheduler and mutex effects dominate. |
-| 2 | 13/14/34 | 6/34/92 | 66,256.39 | 98,548.87 | 0.67× | -58.8% | Quorum path is faster in this sample; inspect contention noise. |
-| 4 | 14/132/419 | 8/63/657 | 83,098.51 | 86,558.25 | 0.96× | +109.5% | Paths are near parity; scheduler and mutex effects dominate. |
-| 8 | 14/321/1521 | 14/430/1618 | 73,418.61 | 71,099.95 | 1.03× | -25.3% | Paths are near parity; scheduler and mutex effects dominate. |
-| 16 | 14/699/2741 | 14/821/2411 | 74,110.17 | 76,241.67 | 0.97× | -14.9% | Paths are near parity; scheduler and mutex effects dominate. |
-| 32 | 13/1746/4917 | 14/1712/5796 | 79,486.70 | 75,523.14 | 1.05× | +2.0% | Paths are near parity; scheduler and mutex effects dominate. |
+| 1 | 2/3/4 | 5/11/12 | 177,126.59 | 129,665.69 | 1.37× | -72.7% | Lease path has a clear throughput advantage in this sample. |
+| 2 | 5/13/48 | 6/14/28 | 133,669.60 | 106,714.55 | 1.25× | -7.1% | Lease path has a clear throughput advantage in this sample. |
+| 4 | 13/176/599 | 13/154/514 | 85,017.97 | 75,988.94 | 1.12× | +14.3% | Lease path has a clear throughput advantage in this sample. |
+| 8 | 13/437/1811 | 13/364/1786 | 71,403.98 | 70,462.88 | 1.01× | +20.1% | Paths are near parity; scheduler and mutex effects dominate. |
+| 16 | 13/940/2911 | 13/605/3200 | 77,028.09 | 77,521.64 | 0.99× | +55.4% | Paths are near parity; scheduler and mutex effects dominate. |
+| 32 | 13/2147/5738 | 13/1935/6004 | 76,513.65 | 74,478.93 | 1.03× | +11.0% | Paths are near parity; scheduler and mutex effects dominate. |
 
 ## Reading the result
 

@@ -47,6 +47,8 @@ printf '%s\n' '== Phase 14 leader leases and linearizable reads =='
 scripts/validate_phase14_read_optimization.sh >"$TMP_DIR/phase14-reads.log"
 printf '%s\n' '== Phase 15 election timers and failure detectors =='
 scripts/validate_phase15_election_timers.sh >"$TMP_DIR/phase15-timers.log"
+printf '%s\n' '== Phase 16 replication flow control =='
+scripts/validate_phase16_replication_flow_control.sh >"$TMP_DIR/phase16-flow-control.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
