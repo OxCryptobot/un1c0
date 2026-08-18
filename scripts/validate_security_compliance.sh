@@ -55,6 +55,8 @@ printf '%s\n' '== Phase 18 log compaction and configuration-bound snapshots =='
 scripts/validate_phase18_log_compaction.sh >"$TMP_DIR/phase18-log-compaction.log"
 printf '%s\n' '== Phase 19 durable compaction and recovery =='
 scripts/validate_phase19_durable_compaction.sh >"$TMP_DIR/phase19-durable-compaction.log"
+printf '%s\n' '== Phase 20 snapshot install readiness =='
+scripts/validate_phase20_snapshot_install_readiness.sh >"$TMP_DIR/phase20-snapshot-readiness.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

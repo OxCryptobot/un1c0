@@ -109,6 +109,8 @@ pub enum ConsensusError {
     InvalidCompactionManifest(String),
     #[error("compaction persistence failed: {0}")]
     CompactionPersistence(String),
+    #[error("invalid snapshot acknowledgement: {0}")]
+    InvalidSnapshotAcknowledgement(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,6 +516,7 @@ pub enum ConsensusMessage {
     ReadIndexResponse(ReadIndexResponse),
     ReplicationBatch(ReplicationBatch),
     ReplicationBatchAck(ReplicationBatchAck),
+    SnapshotInstallAck(SnapshotInstallAck),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -773,6 +776,88 @@ pub enum ReplicationCatchUpAction {
     Incremental(StateDelta),
     Snapshot(ConfigurationBoundSnapshot),
     Idle,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SnapshotInstallReadiness {
+    Unknown,
+    Receiving,
+    Validated,
+    DurablyStaged,
+    Installed,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotInstallAck {
+    pub transfer_id: String,
+    pub follower_id: String,
+    pub term: u64,
+    pub last_included_index: u64,
+    pub last_included_term: u64,
+    pub snapshot_sha256: String,
+    pub configuration_hash: String,
+    pub readiness: SnapshotInstallReadiness,
+    pub reason: Option<String>,
+}
+
+impl SnapshotInstallAck {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_transfer_id(&self.transfer_id)?;
+        validate_node_id(&self.follower_id)?;
+        if self.term == 0 || self.last_included_index == 0 || self.last_included_term == 0 {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "term and snapshot frontier must be positive".into(),
+            ));
+        }
+        validate_hex_digest(&self.snapshot_sha256)?;
+        validate_hex_digest(&self.configuration_hash)?;
+        if self.reason.as_ref().is_some_and(|reason| {
+            reason.is_empty()
+                || reason.len() > MAX_VALUE_BYTES
+                || reason.chars().any(char::is_control)
+        }) {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "acknowledgement reason is invalid".into(),
+            ));
+        }
+        if self.readiness == SnapshotInstallReadiness::Rejected && self.reason.is_none() {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "rejected acknowledgement requires a reason".into(),
+            ));
+        }
+        if self.readiness != SnapshotInstallReadiness::Rejected && self.reason.is_some() {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "non-rejected acknowledgement cannot carry a rejection reason".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SnapshotTransferAction {
+    Idle,
+    Backpressured {
+        retry_at_tick: Option<u64>,
+    },
+    Send {
+        transfer_id: String,
+        snapshot: ConfigurationBoundSnapshot,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotReplicationStatus {
+    pub follower_id: String,
+    pub active_transfer_id: Option<String>,
+    pub readiness: SnapshotInstallReadiness,
+    pub last_installed_index: u64,
+    pub last_installed_term: u64,
+    pub retry_at_tick: Option<u64>,
+    pub sent_transfers: u64,
+    pub acknowledged_transfers: u64,
+    pub rejected_transfers: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1949,6 +2034,35 @@ struct PeerReplicationFlow {
 }
 
 #[derive(Debug, Clone)]
+struct SnapshotReplicationState {
+    active_transfer_id: Option<String>,
+    snapshot: Option<ConfigurationBoundSnapshot>,
+    readiness: SnapshotInstallReadiness,
+    last_installed_index: u64,
+    last_installed_term: u64,
+    retry_at_tick: Option<u64>,
+    sent_transfers: u64,
+    acknowledged_transfers: u64,
+    rejected_transfers: u64,
+}
+
+impl SnapshotReplicationState {
+    fn new() -> Self {
+        Self {
+            active_transfer_id: None,
+            snapshot: None,
+            readiness: SnapshotInstallReadiness::Unknown,
+            last_installed_index: 0,
+            last_installed_term: 0,
+            retry_at_tick: None,
+            sent_transfers: 0,
+            acknowledged_transfers: 0,
+            rejected_transfers: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ReadIndexRound {
     request_id: String,
     key: String,
@@ -1989,6 +2103,7 @@ pub struct ConsensusNode {
     peer_replication_flow: BTreeMap<String, PeerReplicationFlow>,
     compaction_config: LogCompactionConfig,
     compacted_snapshot: Option<ConfigurationBoundSnapshot>,
+    snapshot_replication_state: BTreeMap<String, SnapshotReplicationState>,
     read_rounds: BTreeMap<String, ReadIndexRound>,
     completed_read_requests: BTreeSet<String>,
 }
@@ -2058,6 +2173,7 @@ impl ConsensusNode {
             peer_replication_flow: BTreeMap::new(),
             compaction_config: LogCompactionConfig::default(),
             compacted_snapshot: None,
+            snapshot_replication_state: BTreeMap::new(),
             read_rounds: BTreeMap::new(),
             completed_read_requests: BTreeSet::new(),
         })
@@ -2688,6 +2804,205 @@ impl ConsensusNode {
                 ReplicationCatchUpAction::Incremental,
             )
         })
+    }
+
+    pub fn snapshot_replication_status(
+        &self,
+        follower_id: &str,
+    ) -> Result<SnapshotReplicationStatus, ConsensusError> {
+        self.validate_replication_peer(follower_id)?;
+        let state = self
+            .snapshot_replication_state
+            .get(follower_id)
+            .cloned()
+            .unwrap_or_else(SnapshotReplicationState::new);
+        Ok(SnapshotReplicationStatus {
+            follower_id: follower_id.to_string(),
+            active_transfer_id: state.active_transfer_id,
+            readiness: state.readiness,
+            last_installed_index: state.last_installed_index,
+            last_installed_term: state.last_installed_term,
+            retry_at_tick: state.retry_at_tick,
+            sent_transfers: state.sent_transfers,
+            acknowledged_transfers: state.acknowledged_transfers,
+            rejected_transfers: state.rejected_transfers,
+        })
+    }
+
+    pub fn prepare_snapshot_transfer(
+        &mut self,
+        follower_id: &str,
+        now_tick: u64,
+    ) -> Result<SnapshotTransferAction, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.validate_replication_peer(follower_id)?;
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        let snapshot = self.compacted_snapshot.clone().ok_or_else(|| {
+            ConsensusError::SnapshotRequired("no compacted snapshot is available".into())
+        })?;
+        let state = self
+            .snapshot_replication_state
+            .entry(follower_id.to_string())
+            .or_insert_with(SnapshotReplicationState::new);
+        if state.last_installed_index >= snapshot.last_included_index {
+            return Ok(SnapshotTransferAction::Idle);
+        }
+        if state.active_transfer_id.is_some()
+            || state
+                .retry_at_tick
+                .is_some_and(|retry_at| now_tick < retry_at)
+        {
+            return Ok(SnapshotTransferAction::Backpressured {
+                retry_at_tick: state.retry_at_tick,
+            });
+        }
+        let transfer_id = digest_json(&(
+            &self.id,
+            follower_id,
+            self.current_term,
+            snapshot.last_included_index,
+            &snapshot.state_hash,
+            &snapshot.configuration_hash,
+        ))?;
+        state.active_transfer_id = Some(transfer_id.clone());
+        state.snapshot = Some(snapshot.clone());
+        state.readiness = SnapshotInstallReadiness::Receiving;
+        state.retry_at_tick = None;
+        state.sent_transfers = state.sent_transfers.saturating_add(1);
+        Ok(SnapshotTransferAction::Send {
+            transfer_id,
+            snapshot,
+        })
+    }
+
+    pub fn acknowledge_snapshot_transfer(
+        &mut self,
+        acknowledgement: SnapshotInstallAck,
+        now_tick: u64,
+    ) -> Result<bool, ConsensusError> {
+        acknowledgement.validate()?;
+        self.validate_replication_peer(&acknowledgement.follower_id)?;
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        if acknowledgement.term > self.current_term {
+            self.current_term = acknowledgement.term;
+            self.step_down_and_invalidate();
+            self.voted_for = None;
+            return Ok(false);
+        }
+        if acknowledgement.term < self.current_term {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "snapshot acknowledgement term is stale".into(),
+            ));
+        }
+        let state = self
+            .snapshot_replication_state
+            .get(&acknowledgement.follower_id)
+            .cloned()
+            .ok_or_else(|| {
+                ConsensusError::InvalidSnapshotAcknowledgement(
+                    "snapshot acknowledgement has no active transfer".into(),
+                )
+            })?;
+        if state.active_transfer_id.as_deref() != Some(acknowledgement.transfer_id.as_str()) {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "snapshot acknowledgement transfer ID does not match".into(),
+            ));
+        }
+        let snapshot = state.snapshot.clone().ok_or_else(|| {
+            ConsensusError::InvalidSnapshotAcknowledgement(
+                "snapshot acknowledgement has no transfer snapshot".into(),
+            )
+        })?;
+        if acknowledgement.last_included_index != snapshot.last_included_index
+            || acknowledgement.last_included_term != snapshot.last_included_term
+            || acknowledgement.snapshot_sha256 != digest_json(&snapshot)?
+            || acknowledgement.configuration_hash != snapshot.configuration_hash
+        {
+            return Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "snapshot acknowledgement does not bind the active snapshot".into(),
+            ));
+        }
+        let current_readiness = state.readiness;
+        let flow = self
+            .snapshot_replication_state
+            .get_mut(&acknowledgement.follower_id)
+            .ok_or_else(|| {
+                ConsensusError::InvalidSnapshotAcknowledgement(
+                    "snapshot transfer disappeared during acknowledgement".into(),
+                )
+            })?;
+        match acknowledgement.readiness {
+            SnapshotInstallReadiness::Receiving
+                if current_readiness == SnapshotInstallReadiness::Receiving =>
+            {
+                Ok(false)
+            }
+            SnapshotInstallReadiness::Validated
+                if matches!(
+                    current_readiness,
+                    SnapshotInstallReadiness::Receiving | SnapshotInstallReadiness::Validated
+                ) =>
+            {
+                flow.readiness = SnapshotInstallReadiness::Validated;
+                Ok(false)
+            }
+            SnapshotInstallReadiness::DurablyStaged
+                if matches!(
+                    current_readiness,
+                    SnapshotInstallReadiness::Validated | SnapshotInstallReadiness::DurablyStaged
+                ) =>
+            {
+                flow.readiness = SnapshotInstallReadiness::DurablyStaged;
+                Ok(false)
+            }
+            SnapshotInstallReadiness::Installed
+                if current_readiness == SnapshotInstallReadiness::DurablyStaged =>
+            {
+                let installed_index = snapshot.last_included_index;
+                let installed_term = snapshot.last_included_term;
+                flow.active_transfer_id = None;
+                flow.snapshot = None;
+                flow.readiness = SnapshotInstallReadiness::Installed;
+                flow.last_installed_index = flow.last_installed_index.max(installed_index);
+                flow.last_installed_term = installed_term;
+                flow.retry_at_tick = None;
+                flow.acknowledged_transfers = flow.acknowledged_transfers.saturating_add(1);
+                let last_log_index = self.last_log_index();
+                let progress = self
+                    .replication_progress
+                    .entry(acknowledgement.follower_id.clone())
+                    .or_default();
+                *progress = (*progress).max(installed_index.min(last_log_index));
+                Ok(true)
+            }
+            SnapshotInstallReadiness::Rejected => {
+                flow.active_transfer_id = None;
+                flow.snapshot = None;
+                flow.readiness = SnapshotInstallReadiness::Rejected;
+                flow.retry_at_tick = Some(
+                    now_tick
+                        .checked_add(self.replication_flow_config.retry_backoff_ticks)
+                        .ok_or_else(|| {
+                            ConsensusError::InvalidSnapshotAcknowledgement(
+                                "snapshot retry deadline overflow".into(),
+                            )
+                        })?,
+                );
+                flow.rejected_transfers = flow.rejected_transfers.saturating_add(1);
+                Ok(false)
+            }
+            _ => Err(ConsensusError::InvalidSnapshotAcknowledgement(
+                "snapshot readiness transition is not monotonic".into(),
+            )),
+        }
     }
 
     pub fn install_snapshot(&mut self, snapshot: ReplicatedSnapshot) -> Result<(), ConsensusError> {
@@ -3413,16 +3728,21 @@ impl ConsensusNode {
             );
         }
         self.replication_progress
-            .insert(self.id.clone(), self.log.len() as u64);
+            .insert(self.id.clone(), self.last_log_index());
         let accepted_members = self.accepted_members();
         let local_id = self.id.clone();
         self.peer_replication_flow
             .retain(|member, _| member != &local_id && accepted_members.contains(member));
+        self.snapshot_replication_state
+            .retain(|member, _| member != &local_id && accepted_members.contains(member));
         for member in accepted_members {
             if member != local_id {
                 self.peer_replication_flow
-                    .entry(member)
+                    .entry(member.clone())
                     .or_insert_with(PeerReplicationFlow::new);
+                self.snapshot_replication_state
+                    .entry(member)
+                    .or_insert_with(SnapshotReplicationState::new);
             }
         }
     }
@@ -3507,6 +3827,7 @@ impl ConsensusNode {
         self.invalidate_lease();
         self.heartbeat_due_tick = None;
         self.peer_replication_flow.clear();
+        self.snapshot_replication_state.clear();
         self.read_rounds.clear();
     }
 
@@ -3545,6 +3866,7 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::ReadIndexResponse(value) => value.term,
         ConsensusMessage::ReplicationBatch(value) => value.term,
         ConsensusMessage::ReplicationBatchAck(value) => value.response.term,
+        ConsensusMessage::SnapshotInstallAck(value) => value.term,
     }
 }
 
