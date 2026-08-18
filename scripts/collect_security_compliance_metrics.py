@@ -87,6 +87,8 @@ def main() -> None:
             "replication_backpressure_boundaries": "passed",
             "remote_audit_ordering": "passed",
             "remote_audit_outbox_durability": "passed",
+            "log_compaction_safety": "passed",
+            "configuration_bound_snapshots": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -114,6 +116,14 @@ def main() -> None:
             "gap_and_retry_retention": True,
             "accepted_ack_removes_and_syncs_directory": True,
             "transport_or_sink_quorum": "deployment_boundary",
+        },
+        "phase18_log_compaction": {
+            "bounded_discard_and_retention": True,
+            "logical_frontier_translation": True,
+            "snapshot_required_for_behind_follower": True,
+            "configuration_hash_binding": True,
+            "invalid_target_no_mutation": True,
+            "persistent_compaction_scheduler": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

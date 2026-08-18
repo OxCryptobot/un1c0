@@ -31,6 +31,8 @@ const MAX_LEASE_TICKS: u64 = 86_400_000;
 const MAX_ELECTION_TICKS: u64 = 86_400_000;
 const MAX_REPLICATION_BATCH_BYTES: usize = 512 * 1024;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
+const MAX_COMPACTION_DISCARD_ENTRIES: usize = MAX_BATCH_ENTRIES;
+const MAX_RETAINED_LOG_ENTRIES: usize = MAX_LOG_ENTRIES;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -98,6 +100,10 @@ pub enum ConsensusError {
     InvalidPeer(String),
     #[error("replication flow-control violation: {0}")]
     ReplicationFlowControl(String),
+    #[error("log compaction violation: {0}")]
+    LogCompaction(String),
+    #[error("replication requires a snapshot: {0}")]
+    SnapshotRequired(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -658,6 +664,110 @@ impl ReplicatedSnapshot {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogCompactionConfig {
+    pub min_retained_entries: usize,
+    pub max_discard_entries: usize,
+}
+
+impl Default for LogCompactionConfig {
+    fn default() -> Self {
+        Self {
+            min_retained_entries: 1,
+            max_discard_entries: MAX_COMPACTION_DISCARD_ENTRIES,
+        }
+    }
+}
+
+impl LogCompactionConfig {
+    pub fn new(
+        min_retained_entries: usize,
+        max_discard_entries: usize,
+    ) -> Result<Self, ConsensusError> {
+        let config = Self {
+            min_retained_entries,
+            max_discard_entries,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.min_retained_entries > MAX_RETAINED_LOG_ENTRIES
+            || self.max_discard_entries == 0
+            || self.max_discard_entries > MAX_COMPACTION_DISCARD_ENTRIES
+        {
+            return Err(ConsensusError::LogCompaction(
+                "retention and discard bounds are invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfigurationBoundSnapshot {
+    pub term: u64,
+    pub last_included_index: u64,
+    pub last_included_term: u64,
+    pub commit_index: u64,
+    pub last_applied: u64,
+    pub state: BTreeMap<String, String>,
+    pub state_hash: String,
+    pub configuration_phase: ConfigurationPhase,
+    pub members: BTreeSet<String>,
+    pub previous_members: Option<BTreeSet<String>>,
+    pub configuration_hash: String,
+}
+
+impl ConfigurationBoundSnapshot {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.term == 0
+            || self.last_included_index == 0
+            || self.last_included_term == 0
+            || self.last_included_index > self.last_applied
+            || self.last_applied > self.commit_index
+        {
+            return Err(ConsensusError::InvalidSnapshot(
+                "configuration-bound snapshot metadata is invalid".into(),
+            ));
+        }
+        validate_members(&self.members)?;
+        if let Some(previous) = &self.previous_members {
+            validate_members(previous)?;
+            if self.configuration_phase != ConfigurationPhase::Joint {
+                return Err(ConsensusError::InvalidSnapshot(
+                    "previous membership requires joint configuration".into(),
+                ));
+            }
+        }
+        let expected_state_hash = digest_json(&self.state)?;
+        if expected_state_hash != self.state_hash {
+            return Err(ConsensusError::InvalidSnapshot(
+                "configuration-bound snapshot state hash mismatch".into(),
+            ));
+        }
+        let expected_configuration_hash = digest_json(&(
+            self.configuration_phase,
+            &self.members,
+            &self.previous_members,
+        ))?;
+        if expected_configuration_hash != self.configuration_hash {
+            return Err(ConsensusError::InvalidSnapshot(
+                "configuration-bound snapshot configuration hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplicationCatchUpAction {
+    Incremental(StateDelta),
+    Snapshot(ConfigurationBoundSnapshot),
+    Idle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1416,6 +1526,8 @@ pub struct ConsensusNode {
     current_term: u64,
     voted_for: Option<String>,
     log: Vec<LogEntry>,
+    log_base_index: u64,
+    log_base_term: u64,
     commit_index: u64,
     last_applied: u64,
     state: BTreeMap<String, String>,
@@ -1431,6 +1543,8 @@ pub struct ConsensusNode {
     peer_last_heartbeat_tick: BTreeMap<String, u64>,
     replication_flow_config: ReplicationFlowConfig,
     peer_replication_flow: BTreeMap<String, PeerReplicationFlow>,
+    compaction_config: LogCompactionConfig,
+    compacted_snapshot: Option<ConfigurationBoundSnapshot>,
     read_rounds: BTreeMap<String, ReadIndexRound>,
     completed_read_requests: BTreeSet<String>,
 }
@@ -1481,6 +1595,8 @@ impl ConsensusNode {
             current_term: 0,
             voted_for: None,
             log: Vec::new(),
+            log_base_index: 0,
+            log_base_term: 0,
             commit_index: 0,
             last_applied: 0,
             state: BTreeMap::new(),
@@ -1496,6 +1612,8 @@ impl ConsensusNode {
             peer_last_heartbeat_tick: BTreeMap::new(),
             replication_flow_config: ReplicationFlowConfig::default(),
             peer_replication_flow: BTreeMap::new(),
+            compaction_config: LogCompactionConfig::default(),
+            compacted_snapshot: None,
             read_rounds: BTreeMap::new(),
             completed_read_requests: BTreeSet::new(),
         })
@@ -1518,7 +1636,7 @@ impl ConsensusNode {
     }
 
     pub fn log_len(&self) -> usize {
-        self.log.len()
+        self.last_log_index() as usize
     }
 
     pub fn quorum_size(&self) -> usize {
@@ -1949,6 +2067,185 @@ impl ConsensusNode {
         Ok(snapshot)
     }
 
+    pub fn compaction_config(&self) -> LogCompactionConfig {
+        self.compaction_config
+    }
+
+    pub fn configure_log_compaction(
+        &mut self,
+        config: LogCompactionConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.compaction_config = config;
+        Ok(())
+    }
+
+    pub fn compacted_log_frontier(&self) -> (u64, u64) {
+        (self.log_base_index, self.log_base_term)
+    }
+
+    pub fn retained_log_len(&self) -> usize {
+        self.log.len()
+    }
+
+    pub fn configuration_bound_snapshot(
+        &self,
+    ) -> Result<ConfigurationBoundSnapshot, ConsensusError> {
+        let last_included_index = self.log_base_index.max(self.last_applied);
+        let last_included_term = if last_included_index == self.log_base_index {
+            self.log_base_term
+        } else {
+            self.entry_at(last_included_index)
+                .map(|entry| entry.term)
+                .ok_or_else(|| {
+                    ConsensusError::InvalidSnapshot(
+                        "cannot derive configuration-bound snapshot term".into(),
+                    )
+                })?
+        };
+        if last_included_index == 0 || last_included_term == 0 {
+            return Err(ConsensusError::LogCompaction(
+                "configuration-bound snapshot requires an applied log frontier".into(),
+            ));
+        }
+        let mut snapshot = ConfigurationBoundSnapshot {
+            term: self.current_term.max(last_included_term),
+            last_included_index,
+            last_included_term,
+            commit_index: self.commit_index,
+            last_applied: self.last_applied,
+            state: self.state.clone(),
+            state_hash: digest_json(&self.state)?,
+            configuration_phase: self.configuration_phase,
+            members: self.members.clone(),
+            previous_members: self.previous_members.clone(),
+            configuration_hash: String::new(),
+        };
+        snapshot.configuration_hash = digest_json(&(
+            snapshot.configuration_phase,
+            &snapshot.members,
+            &snapshot.previous_members,
+        ))?;
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    pub fn compact_committed_log(
+        &mut self,
+        target_index: u64,
+    ) -> Result<ConfigurationBoundSnapshot, ConsensusError> {
+        if target_index <= self.log_base_index {
+            return Err(ConsensusError::LogCompaction(
+                "compaction target must advance the retained frontier".into(),
+            ));
+        }
+        if target_index > self.last_applied || target_index > self.commit_index {
+            return Err(ConsensusError::LogCompaction(
+                "compaction target must be committed and applied".into(),
+            ));
+        }
+        let end_index = self.last_log_index();
+        let discard_count = target_index.saturating_sub(self.log_base_index) as usize;
+        if discard_count > self.compaction_config.max_discard_entries {
+            return Err(ConsensusError::LogCompaction(
+                "compaction discard exceeds the configured bound".into(),
+            ));
+        }
+        let retained_after = end_index.saturating_sub(target_index) as usize;
+        if retained_after < self.compaction_config.min_retained_entries {
+            return Err(ConsensusError::LogCompaction(
+                "compaction would violate the retained suffix bound".into(),
+            ));
+        }
+        let boundary = self.entry_at(target_index).cloned().ok_or_else(|| {
+            ConsensusError::LogCompaction(
+                "compaction target is not present in the retained log".into(),
+            )
+        })?;
+        let snapshot = self.configuration_bound_snapshot()?;
+        if snapshot.last_included_index != self.last_applied {
+            return Err(ConsensusError::LogCompaction(
+                "compaction snapshot frontier does not match the requested target".into(),
+            ));
+        }
+        self.log.drain(..discard_count);
+        self.log_base_index = target_index;
+        self.log_base_term = boundary.term;
+        self.compacted_snapshot = Some(snapshot.clone());
+        self.replication_progress
+            .insert(self.id.clone(), self.last_log_index());
+        Ok(snapshot)
+    }
+
+    pub fn install_configuration_bound_snapshot(
+        &mut self,
+        snapshot: ConfigurationBoundSnapshot,
+    ) -> Result<(), ConsensusError> {
+        snapshot.validate()?;
+        if snapshot.term < self.current_term
+            || snapshot.commit_index < self.commit_index
+            || snapshot.last_included_index < self.log_base_index
+        {
+            return Err(ConsensusError::InvalidSnapshot(
+                "configuration-bound snapshot is older than local state".into(),
+            ));
+        }
+        self.current_term = snapshot.term;
+        self.step_down_and_invalidate();
+        self.voted_for = None;
+        self.votes_received.clear();
+        self.commit_index = snapshot.commit_index;
+        self.last_applied = snapshot.last_applied;
+        self.state = snapshot.state.clone();
+        self.members = snapshot.members.clone();
+        self.previous_members = snapshot.previous_members.clone();
+        self.configuration_phase = snapshot.configuration_phase;
+        self.joint_config_index = None;
+        self.pending_finalization = None;
+        self.log.clear();
+        self.log_base_index = snapshot.last_included_index;
+        self.log_base_term = snapshot.last_included_term;
+        self.compacted_snapshot = Some(snapshot);
+        self.replication_progress.clear();
+        self.rebuild_replication_progress();
+        Ok(())
+    }
+
+    pub fn replication_catch_up_for(
+        &self,
+        follower_id: &str,
+    ) -> Result<ReplicationCatchUpAction, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.validate_replication_peer(follower_id)?;
+        let progress = self
+            .replication_progress
+            .get(follower_id)
+            .copied()
+            .unwrap_or_default();
+        if progress < self.log_base_index {
+            return self
+                .compacted_snapshot
+                .clone()
+                .map(ReplicationCatchUpAction::Snapshot)
+                .ok_or_else(|| {
+                    ConsensusError::SnapshotRequired(
+                        "follower is behind the compacted frontier".into(),
+                    )
+                });
+        }
+        if progress >= self.last_log_index() {
+            return Ok(ReplicationCatchUpAction::Idle);
+        }
+        self.incremental_delta_for(follower_id).map(|delta| {
+            delta.map_or(
+                ReplicationCatchUpAction::Idle,
+                ReplicationCatchUpAction::Incremental,
+            )
+        })
+    }
+
     pub fn install_snapshot(&mut self, snapshot: ReplicatedSnapshot) -> Result<(), ConsensusError> {
         snapshot.validate()?;
         if snapshot.term < self.current_term || snapshot.commit_index < self.commit_index {
@@ -2057,7 +2354,7 @@ impl ConsensusNode {
             self.voted_for = Some(self.id.clone());
             self.replication_progress.clear();
             self.replication_progress
-                .insert(self.id.clone(), self.log.len() as u64);
+                .insert(self.id.clone(), self.last_log_index());
             for member in &self.members {
                 if member != &self.id {
                     self.replication_progress.insert(member.clone(), 0);
@@ -2075,7 +2372,7 @@ impl ConsensusNode {
         if self.log.len() >= self.max_log_entries {
             return Err(ConsensusError::LogLimitReached);
         }
-        let index = self.log.len() as u64 + 1;
+        let index = self.last_log_index() + 1;
         let entry = LogEntry::new(index, self.current_term, command)?;
         self.log.push(entry.clone());
         self.replication_progress.insert(self.id.clone(), index);
@@ -2124,9 +2421,15 @@ impl ConsensusNode {
             .get(follower_id)
             .copied()
             .unwrap_or_default();
+        if base_index < self.log_base_index {
+            return Err(ConsensusError::SnapshotRequired(
+                "follower is behind the compacted log frontier".into(),
+            ));
+        }
+        let start = (base_index.saturating_sub(self.log_base_index)) as usize;
         let entries: Vec<LogEntry> = self
             .log
-            .get(base_index as usize..)
+            .get(start..)
             .unwrap_or_default()
             .iter()
             .take(MAX_BATCH_ENTRIES)
@@ -2157,7 +2460,12 @@ impl ConsensusNode {
             self.step_down_and_invalidate();
             self.voted_for = None;
         }
-        if delta.base_index > self.log.len() as u64 {
+        if delta.base_index < self.log_base_index {
+            return Err(ConsensusError::SnapshotRequired(
+                "delta base is behind the compacted log frontier".into(),
+            ));
+        }
+        if delta.base_index > self.last_log_index() {
             return Err(ConsensusError::IncrementalSyncConflict(
                 "delta base is ahead of the local log".into(),
             ));
@@ -2165,13 +2473,13 @@ impl ConsensusNode {
         for (offset, entry) in delta.entries.iter().cloned().enumerate() {
             let expected_index = delta.base_index + offset as u64 + 1;
             entry.validate(expected_index)?;
-            if expected_index as usize <= self.log.len() {
-                let existing = &self.log[expected_index as usize - 1];
+            if let Some(existing) = self.entry_at(expected_index) {
                 if existing.term != entry.term || existing.command_hash != entry.command_hash {
-                    self.log.truncate(expected_index as usize - 1);
+                    let truncate_at = (expected_index - self.log_base_index - 1) as usize;
+                    self.log.truncate(truncate_at);
                 }
             }
-            if expected_index as usize > self.log.len() {
+            if expected_index > self.last_log_index() {
                 if self.log.len() >= self.max_log_entries {
                     return Err(ConsensusError::LogLimitReached);
                 }
@@ -2183,7 +2491,7 @@ impl ConsensusNode {
         self.commit_index = self
             .commit_index
             .max(delta.leader_commit.min(delta.target_index));
-        self.commit_index = self.commit_index.min(self.log.len() as u64);
+        self.commit_index = self.commit_index.min(self.last_log_index());
         self.apply_committed();
         Ok(delta.target_index)
     }
@@ -2395,15 +2703,19 @@ impl ConsensusNode {
             .unwrap_or_default()
             .saturating_add(1);
         let prev_log_index = next_index.saturating_sub(1);
-        let prev_log_term = if prev_log_index == 0 {
-            0
+        if next_index <= self.log_base_index {
+            return Err(ConsensusError::SnapshotRequired(
+                "follower is behind the compacted log frontier".into(),
+            ));
+        }
+        let prev_log_term = if prev_log_index == self.log_base_index {
+            self.log_base_term
         } else {
-            self.log
-                .get(prev_log_index as usize - 1)
+            self.entry_at(prev_log_index)
                 .map(|entry| entry.term)
                 .unwrap_or_default()
         };
-        let start = next_index.saturating_sub(1) as usize;
+        let start = next_index.saturating_sub(self.log_base_index + 1) as usize;
         let entries = self
             .log
             .get(start..)
@@ -2454,7 +2766,7 @@ impl ConsensusNode {
                 term: self.current_term,
                 follower_id: self.id.clone(),
                 success: false,
-                match_index: self.log.len() as u64,
+                match_index: self.last_log_index(),
             });
         }
         if request.term > self.current_term {
@@ -2463,17 +2775,28 @@ impl ConsensusNode {
         }
         self.step_down_and_invalidate();
         self.votes_received.clear();
-        if request.prev_log_index > self.log.len() as u64 {
+        if request.prev_log_index < self.log_base_index {
+            return Err(ConsensusError::SnapshotRequired(
+                "append predecessor is inside the compacted prefix".into(),
+            ));
+        }
+        if request.prev_log_index > self.last_log_index() {
             return Ok(AppendResponse {
                 term: self.current_term,
                 follower_id: self.id.clone(),
                 success: false,
-                match_index: self.log.len() as u64,
+                match_index: self.last_log_index(),
             });
         }
         if request.prev_log_index > 0 {
-            let previous = &self.log[request.prev_log_index as usize - 1];
-            if previous.term != request.prev_log_term {
+            let previous_term = if request.prev_log_index == self.log_base_index {
+                self.log_base_term
+            } else {
+                self.entry_at(request.prev_log_index)
+                    .map(|entry| entry.term)
+                    .unwrap_or_default()
+            };
+            if previous_term != request.prev_log_term {
                 return Ok(AppendResponse {
                     term: self.current_term,
                     follower_id: self.id.clone(),
@@ -2485,13 +2808,13 @@ impl ConsensusNode {
         let mut expected_index = request.prev_log_index + 1;
         for entry in request.entries {
             entry.validate(expected_index)?;
-            if expected_index as usize <= self.log.len() {
-                let existing = &self.log[expected_index as usize - 1];
+            if let Some(existing) = self.entry_at(expected_index) {
                 if existing.term != entry.term || existing.command_hash != entry.command_hash {
-                    self.log.truncate(expected_index as usize - 1);
+                    let truncate_at = (expected_index - self.log_base_index - 1) as usize;
+                    self.log.truncate(truncate_at);
                 }
             }
-            if expected_index as usize > self.log.len() {
+            if expected_index > self.last_log_index() {
                 if self.log.len() >= self.max_log_entries {
                     return Err(ConsensusError::LogLimitReached);
                 }
@@ -2499,7 +2822,7 @@ impl ConsensusNode {
             }
             expected_index += 1;
         }
-        self.commit_index = request.leader_commit.min(self.log.len() as u64);
+        self.commit_index = request.leader_commit.min(self.last_log_index());
         self.apply_committed();
         Ok(AppendResponse {
             term: self.current_term,
@@ -2524,11 +2847,12 @@ impl ConsensusNode {
             return Ok(false);
         }
         if response.success {
+            let last_log_index = self.last_log_index();
             let progress = self
                 .replication_progress
                 .entry(response.follower_id)
                 .or_default();
-            *progress = (*progress).max(response.match_index.min(self.log.len() as u64));
+            *progress = (*progress).max(response.match_index.min(last_log_index));
         } else if let Some(progress) = self.replication_progress.get_mut(&response.follower_id) {
             *progress = progress.saturating_sub(1);
         }
@@ -2537,7 +2861,7 @@ impl ConsensusNode {
 
     fn advance_commit_index(&mut self) -> Result<bool, ConsensusError> {
         let mut changed = false;
-        for index in (self.commit_index + 1)..=(self.log.len() as u64) {
+        for index in (self.commit_index + 1)..=self.last_log_index() {
             let replicated_members: BTreeSet<String> = self
                 .replication_progress
                 .iter()
@@ -2545,8 +2869,7 @@ impl ConsensusNode {
                 .map(|(member, _)| member.clone())
                 .collect();
             let current_term_entry = self
-                .log
-                .get(index as usize - 1)
+                .entry_at(index)
                 .map(|entry| entry.term == self.current_term)
                 .unwrap_or(false);
             if self.has_vote_quorum(&replicated_members) && current_term_entry {
@@ -2561,8 +2884,8 @@ impl ConsensusNode {
     fn apply_committed(&mut self) {
         let mut configuration_changed = false;
         while self.last_applied < self.commit_index {
-            let index = self.last_applied as usize;
-            let Some(entry) = self.log.get(index).cloned() else {
+            let index = self.last_applied + 1;
+            let Some(entry) = self.entry_at(index).cloned() else {
                 break;
             };
             match &entry.command {
@@ -2660,11 +2983,22 @@ impl ConsensusNode {
         }
     }
 
+    fn last_log_index(&self) -> u64 {
+        self.log_base_index + self.log.len() as u64
+    }
+
+    fn entry_at(&self, index: u64) -> Option<&LogEntry> {
+        if index <= self.log_base_index {
+            return None;
+        }
+        self.log.get((index - self.log_base_index - 1) as usize)
+    }
+
     fn last_log_position(&self) -> (u64, u64) {
         self.log
             .last()
             .map(|entry| (entry.index, entry.term))
-            .unwrap_or((0, 0))
+            .unwrap_or((self.log_base_index, self.log_base_term))
     }
 
     fn observe_tick(&mut self, now_tick: u64) {

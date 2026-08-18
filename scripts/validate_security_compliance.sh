@@ -51,6 +51,8 @@ printf '%s\n' '== Phase 16 replication flow control =='
 scripts/validate_phase16_replication_flow_control.sh >"$TMP_DIR/phase16-flow-control.log"
 printf '%s\n' '== Phase 17 remote audit ordering and outbox =='
 scripts/validate_phase17_remote_audit.sh >"$TMP_DIR/phase17-remote-audit.log"
+printf '%s\n' '== Phase 18 log compaction and configuration-bound snapshots =='
+scripts/validate_phase18_log_compaction.sh >"$TMP_DIR/phase18-log-compaction.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

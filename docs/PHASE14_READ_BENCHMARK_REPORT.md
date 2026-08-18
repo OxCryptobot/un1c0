@@ -47,7 +47,7 @@ The consensus core uses an injected monotonic tick and never spawns timers or re
 
 ## Compliance integration
 
-The full security/compliance validator now includes Phase 15 timer gates, Phase 16 replication-flow-control gates, and Phase 17 remote-audit gates, reporting **26 passed gates**. The committed metrics artifact contains the 12 raw Phase 14 lease/quorum rows, zero benchmark errors, Phase 15 and Phase 16 safety records, Phase 17 remote-audit evidence, the commit identifier, and the non-secret production-boundary notes.
+The full security/compliance validator now includes Phase 15 timer gates, Phase 16 replication-flow-control gates, Phase 17 remote-audit gates, and Phase 18 compaction gates, reporting **28 passed gates**. The committed metrics artifact contains the 12 raw Phase 14 lease/quorum rows, zero benchmark errors, Phase 15 through Phase 18 safety records, the commit identifier, and the non-secret production-boundary notes.
 
 ## Reproduction
 
@@ -63,7 +63,7 @@ Run the detailed analysis generator:
 python3 scripts/analyze_phase14_benchmark.py
 ```
 
-Run the complete project gate, including Phases 15, 16, and 17:
+Run the complete project gate, including Phases 15, 16, 17, and 18:
 
 ```bash
 scripts/validate_security_compliance.sh
