@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "fbfcad83cef6fd6d9c16ef519e248212241727ef",
+  "commit": "1ecc99136f7d48b1343fd384344e458db70400d5",
   "gates": {
     "authenticated_consensus_transport": "passed",
     "authenticated_partition_benchmark": "passed",
@@ -68,7 +68,7 @@
     "snapshot_chunk_streaming": "passed",
     "snapshot_installation": "passed"
   },
-  "generated_at_utc": "2026-08-18T02:48:01.066443+00:00",
+  "generated_at_utc": "2026-08-18T02:48:37.018753+00:00",
   "operations": [
     {
       "baseline_errors": 0,
