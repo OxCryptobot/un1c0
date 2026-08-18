@@ -37,6 +37,7 @@ const MAX_COMPACTION_MANIFEST_BYTES: u64 = 128 * 1024;
 const MAX_SNAPSHOT_BANDWIDTH_BYTES: u64 = MAX_SNAPSHOT_BYTES;
 const MAX_SNAPSHOT_BANDWIDTH_WINDOW_TICKS: u64 = MAX_ELECTION_TICKS;
 const MAX_DURABLE_CONSENSUS_STATE_BYTES: u64 = 128 * 1024;
+const MAX_SOCKET_QUOTA_BYTES: u64 = 16 * MAX_FRAME_BYTES as u64;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -128,6 +129,8 @@ pub enum ConsensusError {
     CompactionCoordination(String),
     #[error("snapshot request violation: {0}")]
     SnapshotRequest(String),
+    #[error("socket quota violation: {0}")]
+    SocketQuota(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1824,6 +1827,10 @@ impl ReplayWindow {
         self.seen.len()
     }
 
+    pub fn contains_nonce(&self, nonce: &str) -> bool {
+        self.seen.contains_key(nonce)
+    }
+
     pub fn replay_epoch(&self) -> u64 {
         self.replay_epoch
     }
@@ -1997,6 +2004,126 @@ impl AuthenticatedConsensusEnvelope {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocketQuotaConfig {
+    pub max_in_flight_bytes_per_peer: u64,
+    pub max_receive_bytes_per_window: u64,
+    pub receive_window_ticks: u64,
+    pub retry_backoff_ticks: u64,
+}
+
+impl Default for SocketQuotaConfig {
+    fn default() -> Self {
+        Self {
+            max_in_flight_bytes_per_peer: 4 * MAX_FRAME_BYTES as u64,
+            max_receive_bytes_per_window: 4 * MAX_FRAME_BYTES as u64,
+            receive_window_ticks: 1,
+            retry_backoff_ticks: 1,
+        }
+    }
+}
+
+impl SocketQuotaConfig {
+    pub fn new(
+        max_in_flight_bytes_per_peer: u64,
+        max_receive_bytes_per_window: u64,
+        receive_window_ticks: u64,
+        retry_backoff_ticks: u64,
+    ) -> Result<Self, ConsensusError> {
+        let config = Self {
+            max_in_flight_bytes_per_peer,
+            max_receive_bytes_per_window,
+            receive_window_ticks,
+            retry_backoff_ticks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.max_in_flight_bytes_per_peer == 0
+            || self.max_in_flight_bytes_per_peer > MAX_SOCKET_QUOTA_BYTES
+            || self.max_receive_bytes_per_window == 0
+            || self.max_receive_bytes_per_window > MAX_SOCKET_QUOTA_BYTES
+            || self.receive_window_ticks == 0
+            || self.receive_window_ticks > MAX_ELECTION_TICKS
+            || self.retry_backoff_ticks == 0
+            || self.retry_backoff_ticks > MAX_ELECTION_TICKS
+        {
+            return Err(ConsensusError::SocketQuota(
+                "socket quota values are outside bounded limits".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocketPeerQuota {
+    pub peer_id: String,
+    pub in_flight_bytes: u64,
+    pub receive_window_start_tick: Option<u64>,
+    pub receive_window_bytes: u64,
+    pub admitted_frames: u64,
+    pub rejected_frames: u64,
+    pub backpressured_sends: u64,
+    pub backpressured_receives: u64,
+}
+
+impl SocketPeerQuota {
+    fn new(peer_id: &str) -> Self {
+        Self {
+            peer_id: peer_id.to_string(),
+            in_flight_bytes: 0,
+            receive_window_start_tick: None,
+            receive_window_bytes: 0,
+            admitted_frames: 0,
+            rejected_frames: 0,
+            backpressured_sends: 0,
+            backpressured_receives: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SocketBackpressureAction {
+    Admitted {
+        frame_bytes: u64,
+        available_bytes: u64,
+    },
+    Backpressured {
+        retry_at_tick: u64,
+        available_bytes: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SocketReceiveAction {
+    Received {
+        envelope: AuthenticatedConsensusEnvelope,
+        frame_bytes: u64,
+    },
+    Backpressured {
+        retry_at_tick: u64,
+        available_bytes: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SocketTransportMetrics {
+    pub peer_id: String,
+    pub in_flight_bytes: u64,
+    pub receive_window_start_tick: Option<u64>,
+    pub receive_window_bytes: u64,
+    pub max_in_flight_bytes: u64,
+    pub max_receive_bytes_per_window: u64,
+    pub receive_window_ticks: u64,
+    pub admitted_frames: u64,
+    pub rejected_frames: u64,
+    pub backpressured_sends: u64,
+    pub backpressured_receives: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthenticatedSocketTransport {
     cluster_id: String,
@@ -2006,6 +2133,8 @@ pub struct AuthenticatedSocketTransport {
     replay_epoch: u64,
     replay_term_floor: u64,
     replay_window_entries: usize,
+    quota_config: SocketQuotaConfig,
+    peer_quotas: BTreeMap<String, SocketPeerQuota>,
     max_frame_bytes: usize,
 }
 
@@ -2034,6 +2163,26 @@ impl AuthenticatedSocketTransport {
         replay_epoch: u64,
         replay_term_floor: u64,
     ) -> Result<Self, ConsensusError> {
+        Self::new_with_epoch_and_quota(
+            cluster_id,
+            node_id,
+            trusted_keys,
+            replay_window_entries,
+            replay_epoch,
+            replay_term_floor,
+            SocketQuotaConfig::default(),
+        )
+    }
+
+    pub fn new_with_epoch_and_quota(
+        cluster_id: &str,
+        node_id: &str,
+        trusted_keys: BTreeMap<String, Vec<u8>>,
+        replay_window_entries: usize,
+        replay_epoch: u64,
+        replay_term_floor: u64,
+        quota_config: SocketQuotaConfig,
+    ) -> Result<Self, ConsensusError> {
         validate_cluster_id(cluster_id)?;
         validate_node_id(node_id)?;
         validate_members(&trusted_keys.keys().cloned().collect())?;
@@ -2047,6 +2196,7 @@ impl AuthenticatedSocketTransport {
                 "replay epoch and term floor must be positive".into(),
             ));
         }
+        quota_config.validate()?;
         let mut replay_windows = BTreeMap::new();
         for sender_id in trusted_keys.keys() {
             replay_windows.insert(
@@ -2060,6 +2210,10 @@ impl AuthenticatedSocketTransport {
                 )?,
             );
         }
+        let peer_quotas = trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), SocketPeerQuota::new(peer_id)))
+            .collect();
         Ok(Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2068,6 +2222,8 @@ impl AuthenticatedSocketTransport {
             replay_epoch,
             replay_term_floor,
             replay_window_entries,
+            quota_config,
+            peer_quotas,
             max_frame_bytes: MAX_FRAME_BYTES,
         })
     }
@@ -2119,7 +2275,159 @@ impl AuthenticatedSocketTransport {
         self.replay_windows = replay_windows;
         self.replay_epoch = replay_epoch;
         self.replay_term_floor = replay_term_floor;
+        self.peer_quotas = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), SocketPeerQuota::new(peer_id)))
+            .collect();
         Ok(())
+    }
+
+    pub fn socket_quota_config(&self) -> SocketQuotaConfig {
+        self.quota_config
+    }
+
+    pub fn set_socket_quota_config(
+        &mut self,
+        quota_config: SocketQuotaConfig,
+    ) -> Result<(), ConsensusError> {
+        quota_config.validate()?;
+        self.quota_config = quota_config;
+        Ok(())
+    }
+
+    pub fn socket_peer_metrics(
+        &self,
+        peer_id: &str,
+    ) -> Result<SocketTransportMetrics, ConsensusError> {
+        validate_node_id(peer_id)?;
+        let quota = self
+            .peer_quotas
+            .get(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        Ok(SocketTransportMetrics {
+            peer_id: peer_id.to_string(),
+            in_flight_bytes: quota.in_flight_bytes,
+            receive_window_start_tick: quota.receive_window_start_tick,
+            receive_window_bytes: quota.receive_window_bytes,
+            max_in_flight_bytes: self.quota_config.max_in_flight_bytes_per_peer,
+            max_receive_bytes_per_window: self.quota_config.max_receive_bytes_per_window,
+            receive_window_ticks: self.quota_config.receive_window_ticks,
+            admitted_frames: quota.admitted_frames,
+            rejected_frames: quota.rejected_frames,
+            backpressured_sends: quota.backpressured_sends,
+            backpressured_receives: quota.backpressured_receives,
+        })
+    }
+
+    pub fn admit_send(
+        &mut self,
+        peer_id: &str,
+        frame_bytes: u64,
+        now_tick: u64,
+    ) -> Result<SocketBackpressureAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.trusted_keys.contains_key(peer_id) {
+            return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        if frame_bytes == 0 || frame_bytes as usize > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        let available = self
+            .quota_config
+            .max_in_flight_bytes_per_peer
+            .saturating_sub(quota.in_flight_bytes);
+        if frame_bytes > available {
+            quota.backpressured_sends = quota.backpressured_sends.saturating_add(1);
+            let retry_at_tick = now_tick
+                .checked_add(self.quota_config.retry_backoff_ticks)
+                .ok_or_else(|| ConsensusError::SocketQuota("send retry tick overflow".into()))?;
+            return Ok(SocketBackpressureAction::Backpressured {
+                retry_at_tick,
+                available_bytes: available,
+            });
+        }
+        quota.in_flight_bytes = quota
+            .in_flight_bytes
+            .checked_add(frame_bytes)
+            .ok_or_else(|| ConsensusError::SocketQuota("send quota byte overflow".into()))?;
+        quota.admitted_frames = quota.admitted_frames.saturating_add(1);
+        Ok(SocketBackpressureAction::Admitted {
+            frame_bytes,
+            available_bytes: available.saturating_sub(frame_bytes),
+        })
+    }
+
+    pub fn complete_send(&mut self, peer_id: &str, frame_bytes: u64) -> Result<(), ConsensusError> {
+        validate_node_id(peer_id)?;
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        if frame_bytes == 0 || frame_bytes > quota.in_flight_bytes {
+            return Err(ConsensusError::SocketQuota(
+                "send completion exceeds the admitted peer bytes".into(),
+            ));
+        }
+        quota.in_flight_bytes -= frame_bytes;
+        Ok(())
+    }
+
+    fn admit_receive(
+        &mut self,
+        peer_id: &str,
+        frame_bytes: u64,
+        now_tick: u64,
+    ) -> Result<SocketBackpressureAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if frame_bytes == 0 || frame_bytes as usize > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        if let Some(start_tick) = quota.receive_window_start_tick {
+            if now_tick < start_tick {
+                return Err(ConsensusError::SocketQuota(
+                    "receive quota clock regressed".into(),
+                ));
+            }
+            if now_tick.saturating_sub(start_tick) >= self.quota_config.receive_window_ticks {
+                quota.receive_window_start_tick = Some(now_tick);
+                quota.receive_window_bytes = 0;
+            }
+        } else {
+            quota.receive_window_start_tick = Some(now_tick);
+            quota.receive_window_bytes = 0;
+        }
+        let available = self
+            .quota_config
+            .max_receive_bytes_per_window
+            .saturating_sub(quota.receive_window_bytes);
+        if frame_bytes > available {
+            quota.backpressured_receives = quota.backpressured_receives.saturating_add(1);
+            let retry_at_tick = now_tick
+                .checked_add(self.quota_config.retry_backoff_ticks)
+                .ok_or_else(|| ConsensusError::SocketQuota("receive retry tick overflow".into()))?;
+            return Ok(SocketBackpressureAction::Backpressured {
+                retry_at_tick,
+                available_bytes: available,
+            });
+        }
+        quota.receive_window_bytes = quota
+            .receive_window_bytes
+            .checked_add(frame_bytes)
+            .ok_or_else(|| ConsensusError::SocketQuota("receive quota byte overflow".into()))?;
+        quota.admitted_frames = quota.admitted_frames.saturating_add(1);
+        Ok(SocketBackpressureAction::Admitted {
+            frame_bytes,
+            available_bytes: available.saturating_sub(frame_bytes),
+        })
     }
 
     pub fn replay_window_len(&self, sender_id: &str) -> Result<usize, ConsensusError> {
@@ -2128,6 +2436,50 @@ impl AuthenticatedSocketTransport {
             .get(sender_id)
             .map(ReplayWindow::len)
             .ok_or_else(|| ConsensusError::UnknownMember(sender_id.to_string()))
+    }
+
+    pub fn send_to_peer_with_backpressure(
+        &mut self,
+        stream: &mut TcpStream,
+        peer_id: &str,
+        envelope: &AuthenticatedConsensusEnvelope,
+        now_tick: u64,
+    ) -> Result<SocketBackpressureAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.trusted_keys.contains_key(peer_id) {
+            return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        if envelope.sender_id != self.node_id {
+            return Err(ConsensusError::Unauthenticated(
+                "transport cannot send on behalf of another node".into(),
+            ));
+        }
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &envelope.sender_id,
+            self.trusted_keys
+                .get(&envelope.sender_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        let bytes = serde_json::to_vec(envelope)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let admission = self.admit_send(peer_id, bytes.len() as u64, now_tick)?;
+        if matches!(admission, SocketBackpressureAction::Backpressured { .. }) {
+            return Ok(admission);
+        }
+        let length = (bytes.len() as u32).to_be_bytes();
+        let result = stream
+            .write_all(&length)
+            .and_then(|_| stream.write_all(&bytes))
+            .and_then(|_| stream.flush())
+            .map_err(|error| ConsensusError::Transport(error.to_string()));
+        self.complete_send(peer_id, bytes.len() as u64)?;
+        result.map(|_| admission)
     }
 
     pub fn send(
@@ -2162,10 +2514,11 @@ impl AuthenticatedSocketTransport {
             .map_err(|error| ConsensusError::Transport(error.to_string()))
     }
 
-    pub fn receive(
+    pub fn receive_with_backpressure(
         &mut self,
         stream: &mut TcpStream,
-    ) -> Result<AuthenticatedConsensusEnvelope, ConsensusError> {
+        now_tick: u64,
+    ) -> Result<SocketReceiveAction, ConsensusError> {
         let mut length_bytes = [0u8; 4];
         stream
             .read_exact(&mut length_bytes)
@@ -2183,20 +2536,64 @@ impl AuthenticatedSocketTransport {
         let trusted_key = self
             .trusted_keys
             .get(&envelope.sender_id)
+            .cloned()
             .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
         envelope.verify_for_cluster_epoch(
             &self.cluster_id,
             &envelope.sender_id,
-            trusted_key,
+            &trusted_key,
             self.replay_epoch,
             self.replay_term_floor,
         )?;
         let window = self
             .replay_windows
-            .get_mut(&envelope.sender_id)
+            .get(&envelope.sender_id)
             .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
-        window.accept(&envelope, trusted_key)?;
-        Ok(envelope)
+        if window.contains_nonce(&envelope.nonce) {
+            return Err(ConsensusError::ReplayDetected);
+        }
+        let admission = self.admit_receive(&envelope.sender_id, length as u64, now_tick)?;
+        if let SocketBackpressureAction::Backpressured {
+            retry_at_tick,
+            available_bytes,
+        } = admission
+        {
+            return Ok(SocketReceiveAction::Backpressured {
+                retry_at_tick,
+                available_bytes,
+            });
+        }
+        self.replay_windows
+            .get_mut(&envelope.sender_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?
+            .accept(&envelope, &trusted_key)?;
+        Ok(SocketReceiveAction::Received {
+            envelope,
+            frame_bytes: length as u64,
+        })
+    }
+
+    pub fn receive(
+        &mut self,
+        stream: &mut TcpStream,
+    ) -> Result<AuthenticatedConsensusEnvelope, ConsensusError> {
+        match self.receive_with_backpressure(stream, 0)? {
+            SocketReceiveAction::Received { envelope, .. } => Ok(envelope),
+            SocketReceiveAction::Backpressured { .. } => Err(ConsensusError::SocketQuota(
+                "receive is backpressured; use receive_with_backpressure with a retry tick".into(),
+            )),
+        }
+    }
+
+    pub fn listen_once_with_backpressure(
+        &mut self,
+        listener: &TcpListener,
+        now_tick: u64,
+    ) -> Result<SocketReceiveAction, ConsensusError> {
+        let (mut stream, _) = listener
+            .accept()
+            .map_err(|error| ConsensusError::Transport(error.to_string()))?;
+        self.receive_with_backpressure(&mut stream, now_tick)
     }
 
     pub fn listen_once(

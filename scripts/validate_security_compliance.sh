@@ -63,6 +63,8 @@ printf '%s\n' '== Phase 22 durable term and epoch-bound replay =='
 scripts/validate_phase22_durable_term_replay.sh >"$TMP_DIR/phase22-durable-term-replay.log"
 printf '%s\n' '== Phase 23 compaction coordination and snapshot requests =='
 scripts/validate_phase23_compaction_coordination.sh >"$TMP_DIR/phase23-compaction-coordination.log"
+printf '%s\n' '== Phase 24 socket backpressure and per-peer quotas =='
+scripts/validate_phase24_socket_backpressure.sh >"$TMP_DIR/phase24-socket-backpressure.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
