@@ -65,8 +65,8 @@ The artifact’s authenticated partition benchmark models a five-member configur
 
 ## References
 
-[1]: https://github.com/OxCryptobot/un1c0/blob/main/benchmarks/security_compliance_metrics.json "Published Phase 27 security metrics"
-[2]: https://github.com/OxCryptobot/un1c0/blob/main/benchmarks/security_compliance_audit.json "Independent Phase 27 metrics audit"
+[1]: https://github.com/OxCryptobot/un1c0/blob/f5ce43b2b0cf8a021c307a9afb5c78fac84d957e/benchmarks/security_compliance_metrics.json "Published Phase 27 security metrics at commit f5ce43b"
+[2]: https://github.com/OxCryptobot/un1c0/blob/f5ce43b2b0cf8a021c307a9afb5c78fac84d957e/benchmarks/security_compliance_audit.json "Independent Phase 27 metrics audit at commit f5ce43b"
 [3]: https://github.com/OxCryptobot/un1c0/blob/main/scripts/collect_security_compliance_metrics.py "Compliance metrics collector"
 [4]: https://github.com/OxCryptobot/un1c0/blob/main/scripts/audit_security_compliance_metrics.py "Independent metrics auditor"
 [5]: https://github.com/OxCryptobot/un1c0/blob/main/tests/phase27_replicated_delivery_ownership_integration.rs "Phase 27 integration evidence"
