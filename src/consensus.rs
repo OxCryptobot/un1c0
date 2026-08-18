@@ -23,6 +23,8 @@ const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_NONCE_BYTES: usize = 128;
 const MAX_CLUSTER_ID_BYTES: usize = 128;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_SNAPSHOT_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_SYNC_CHUNKS: usize = 256;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -65,6 +67,12 @@ pub enum ConsensusError {
     Transport(String),
     #[error("consensus frame exceeds the configured bound")]
     FrameTooLarge,
+    #[error("invalid snapshot chunk: {0}")]
+    InvalidSnapshotChunk(String),
+    #[error("snapshot transfer is incomplete")]
+    SnapshotTransferIncomplete,
+    #[error("incremental state synchronization conflict: {0}")]
+    IncrementalSyncConflict(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,6 +219,9 @@ pub enum ConsensusMessage {
     VoteResponse(VoteResponse),
     AppendEntries(AppendEntries),
     AppendResponse(AppendResponse),
+    SnapshotManifest(SnapshotManifest),
+    SnapshotChunk(SnapshotChunk),
+    StateDelta(StateDelta),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,6 +244,321 @@ impl ReplicatedSnapshot {
         if expected != self.state_hash {
             return Err(ConsensusError::InvalidSnapshot(
                 "snapshot state hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotManifest {
+    pub transfer_id: String,
+    pub term: u64,
+    pub commit_index: u64,
+    pub last_applied: u64,
+    pub total_bytes: u64,
+    pub chunk_size: u32,
+    pub chunk_count: u32,
+    pub state_hash: String,
+    pub manifest_hash: String,
+}
+
+impl SnapshotManifest {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.transfer_id.is_empty()
+            || self.transfer_id.len() > MAX_CLUSTER_ID_BYTES
+            || self.transfer_id.chars().any(char::is_control)
+        {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "transfer ID is invalid".into(),
+            ));
+        }
+        if self.term == 0 || self.chunk_size == 0 || self.chunk_size as usize > MAX_SNAPSHOT_CHUNK_BYTES {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "manifest term or chunk size is invalid".into(),
+            ));
+        }
+        if self.chunk_count == 0 || self.chunk_count as usize > MAX_SYNC_CHUNKS {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "manifest chunk count is outside the configured bound".into(),
+            ));
+        }
+        if self.total_bytes == 0 || self.total_bytes > MAX_SNAPSHOT_BYTES {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "manifest byte count is outside the snapshot bound".into(),
+            ));
+        }
+        let expected_count: u32 = self
+            .total_bytes
+            .div_ceil(self.chunk_size as u64)
+            .try_into()
+            .map_err(|_| ConsensusError::InvalidSnapshotChunk("chunk count overflow".into()))?;
+        if expected_count != self.chunk_count {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "manifest chunk count does not match total bytes".into(),
+            ));
+        }
+        validate_hex_digest(&self.state_hash)?;
+        let expected = digest_json(&(
+            &self.transfer_id,
+            self.term,
+            self.commit_index,
+            self.last_applied,
+            self.total_bytes,
+            self.chunk_size,
+            self.chunk_count,
+            &self.state_hash,
+        ))?;
+        if expected != self.manifest_hash {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "manifest hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotChunk {
+    pub term: u64,
+    pub transfer_id: String,
+    pub index: u32,
+    pub offset: u64,
+    pub bytes: Vec<u8>,
+    pub chunk_hash: String,
+}
+
+impl SnapshotChunk {
+    pub fn validate(&self, manifest: &SnapshotManifest) -> Result<(), ConsensusError> {
+        manifest.validate()?;
+        if self.term != manifest.term
+            || self.transfer_id != manifest.transfer_id
+            || self.index >= manifest.chunk_count
+            || self.bytes.is_empty()
+            || self.bytes.len() > manifest.chunk_size as usize
+            || self.offset != self.index as u64 * manifest.chunk_size as u64
+        {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "chunk identity, offset, or size is invalid".into(),
+            ));
+        }
+        let remaining = manifest.total_bytes.saturating_sub(self.offset);
+        if self.bytes.len() as u64 > remaining {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "chunk exceeds the manifest byte frontier".into(),
+            ));
+        }
+        let expected = digest_bytes(&self.bytes);
+        if expected != self.chunk_hash {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "chunk hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotChunker {
+    manifest: SnapshotManifest,
+    chunks: Vec<SnapshotChunk>,
+}
+
+impl SnapshotChunker {
+    pub fn from_snapshot(snapshot: &ReplicatedSnapshot, transfer_id: &str, chunk_size: usize) -> Result<Self, ConsensusError> {
+        snapshot.validate()?;
+        if chunk_size == 0 || chunk_size > MAX_SNAPSHOT_CHUNK_BYTES {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "chunk size exceeds the configured bound".into(),
+            ));
+        }
+        validate_transfer_id(transfer_id)?;
+        let bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_SNAPSHOT_BYTES {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "serialized snapshot exceeds the configured bound".into(),
+            ));
+        }
+        let chunk_count = bytes.len().div_ceil(chunk_size);
+        if chunk_count > MAX_SYNC_CHUNKS {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "snapshot requires too many chunks".into(),
+            ));
+        }
+        let mut chunks = Vec::with_capacity(chunk_count);
+        for (index, slice) in bytes.chunks(chunk_size).enumerate() {
+            chunks.push(SnapshotChunk {
+                term: snapshot.term,
+                transfer_id: transfer_id.to_string(),
+                index: index as u32,
+                offset: index as u64 * chunk_size as u64,
+                bytes: slice.to_vec(),
+                chunk_hash: digest_bytes(slice),
+            });
+        }
+        let state_hash = snapshot.state_hash.clone();
+        let mut manifest = SnapshotManifest {
+            transfer_id: transfer_id.to_string(),
+            term: snapshot.term,
+            commit_index: snapshot.commit_index,
+            last_applied: snapshot.last_applied,
+            total_bytes: bytes.len() as u64,
+            chunk_size: chunk_size as u32,
+            chunk_count: chunk_count as u32,
+            state_hash,
+            manifest_hash: String::new(),
+        };
+        manifest.manifest_hash = digest_json(&(
+            &manifest.transfer_id,
+            manifest.term,
+            manifest.commit_index,
+            manifest.last_applied,
+            manifest.total_bytes,
+            manifest.chunk_size,
+            manifest.chunk_count,
+            &manifest.state_hash,
+        ))?;
+        manifest.validate()?;
+        Ok(Self { manifest, chunks })
+    }
+
+    pub fn manifest(&self) -> &SnapshotManifest {
+        &self.manifest
+    }
+
+    pub fn chunks(&self) -> &[SnapshotChunk] {
+        &self.chunks
+    }
+
+    pub fn chunk(&self, index: u32) -> Option<&SnapshotChunk> {
+        self.chunks.get(index as usize)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotAssembler {
+    manifest: SnapshotManifest,
+    chunks: BTreeMap<u32, SnapshotChunk>,
+}
+
+impl SnapshotAssembler {
+    pub fn new(manifest: SnapshotManifest) -> Result<Self, ConsensusError> {
+        manifest.validate()?;
+        Ok(Self {
+            manifest,
+            chunks: BTreeMap::new(),
+        })
+    }
+
+    pub fn accept(&mut self, chunk: SnapshotChunk) -> Result<(), ConsensusError> {
+        chunk.validate(&self.manifest)?;
+        if let Some(existing) = self.chunks.get(&chunk.index) {
+            if existing.chunk_hash != chunk.chunk_hash {
+                return Err(ConsensusError::InvalidSnapshotChunk(
+                    "duplicate chunk conflicts with an earlier chunk".into(),
+                ));
+            }
+            return Ok(());
+        }
+        self.chunks.insert(chunk.index, chunk);
+        Ok(())
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.chunks.len() == self.manifest.chunk_count as usize
+    }
+
+    pub fn finish(self) -> Result<ReplicatedSnapshot, ConsensusError> {
+        if !self.is_complete() {
+            return Err(ConsensusError::SnapshotTransferIncomplete);
+        }
+        let mut bytes = Vec::with_capacity(self.manifest.total_bytes as usize);
+        for index in 0..self.manifest.chunk_count {
+            let chunk = self
+                .chunks
+                .get(&index)
+                .ok_or(ConsensusError::SnapshotTransferIncomplete)?;
+            bytes.extend_from_slice(&chunk.bytes);
+        }
+        if bytes.len() as u64 != self.manifest.total_bytes {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "assembled byte count does not match manifest".into(),
+            ));
+        }
+        let snapshot: ReplicatedSnapshot = serde_json::from_slice(&bytes)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        snapshot.validate()?;
+        if snapshot.term != self.manifest.term
+            || snapshot.commit_index != self.manifest.commit_index
+            || snapshot.last_applied != self.manifest.last_applied
+            || snapshot.state_hash != self.manifest.state_hash
+        {
+            return Err(ConsensusError::InvalidSnapshotChunk(
+                "assembled snapshot metadata does not match manifest".into(),
+            ));
+        }
+        Ok(snapshot)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StateDelta {
+    pub term: u64,
+    pub base_index: u64,
+    pub target_index: u64,
+    pub leader_commit: u64,
+    pub entries: Vec<LogEntry>,
+    pub delta_hash: String,
+}
+
+impl StateDelta {
+    pub fn new(
+        term: u64,
+        base_index: u64,
+        leader_commit: u64,
+        entries: Vec<LogEntry>,
+    ) -> Result<Self, ConsensusError> {
+        if term == 0 || entries.is_empty() || entries.len() > MAX_BATCH_ENTRIES {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "delta must contain 1 to MAX_BATCH_ENTRIES entries".into(),
+            ));
+        }
+        let target_index = base_index
+            .checked_add(entries.len() as u64)
+            .ok_or(ConsensusError::IncrementalSyncConflict("delta index overflow".into()))?;
+        for (offset, entry) in entries.iter().enumerate() {
+            entry.validate(base_index + offset as u64 + 1)?;
+        }
+        if leader_commit > target_index {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "leader commit exceeds the delta frontier".into(),
+            ));
+        }
+        let delta_hash = digest_json(&(term, base_index, target_index, leader_commit, &entries))?;
+        Ok(Self {
+            term,
+            base_index,
+            target_index,
+            leader_commit,
+            entries,
+            delta_hash,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        let expected = Self::new(
+            self.term,
+            self.base_index,
+            self.leader_commit,
+            self.entries.clone(),
+        )?;
+        if expected.target_index != self.target_index
+            || expected.leader_commit != self.leader_commit
+            || expected.delta_hash != self.delta_hash
+        {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "state delta hash or frontier mismatch".into(),
             ));
         }
         Ok(())
@@ -917,6 +1243,150 @@ impl ConsensusNode {
         Ok(entry)
     }
 
+    pub fn snapshot_chunker(
+        &self,
+        transfer_id: &str,
+        chunk_size: usize,
+    ) -> Result<SnapshotChunker, ConsensusError> {
+        SnapshotChunker::from_snapshot(&self.snapshot()?, transfer_id, chunk_size)
+    }
+
+    pub fn install_snapshot_stream(
+        &mut self,
+        manifest: SnapshotManifest,
+        chunks: impl IntoIterator<Item = SnapshotChunk>,
+    ) -> Result<(), ConsensusError> {
+        let mut assembler = SnapshotAssembler::new(manifest)?;
+        for chunk in chunks {
+            assembler.accept(chunk)?;
+        }
+        self.install_snapshot(assembler.finish()?)
+    }
+
+    pub fn incremental_delta_for(
+        &self,
+        follower_id: &str,
+    ) -> Result<Option<StateDelta>, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        validate_node_id(follower_id)?;
+        if !self.accepted_members().contains(follower_id) {
+            return Err(ConsensusError::UnknownMember(follower_id.to_string()));
+        }
+        if follower_id == self.id {
+            return Err(ConsensusError::InvalidMessage(
+                "leader cannot synchronize itself".into(),
+            ));
+        }
+        let base_index = self
+            .replication_progress
+            .get(follower_id)
+            .copied()
+            .unwrap_or_default();
+        let entries: Vec<LogEntry> = self
+            .log
+            .get(base_index as usize..)
+            .unwrap_or_default()
+            .iter()
+            .take(MAX_BATCH_ENTRIES)
+            .cloned()
+            .collect();
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let target_index = base_index + entries.len() as u64;
+        StateDelta::new(
+            self.current_term,
+            base_index,
+            self.commit_index.min(target_index),
+            entries,
+        )
+        .map(Some)
+    }
+
+    pub fn apply_incremental_delta(&mut self, delta: StateDelta) -> Result<u64, ConsensusError> {
+        delta.validate()?;
+        if delta.term < self.current_term {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "delta term is stale".into(),
+            ));
+        }
+        if delta.term > self.current_term {
+            self.current_term = delta.term;
+            self.voted_for = None;
+        }
+        if delta.base_index > self.log.len() as u64 {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "delta base is ahead of the local log".into(),
+            ));
+        }
+        for (offset, entry) in delta.entries.iter().cloned().enumerate() {
+            let expected_index = delta.base_index + offset as u64 + 1;
+            entry.validate(expected_index)?;
+            if expected_index as usize <= self.log.len() {
+                let existing = &self.log[expected_index as usize - 1];
+                if existing.term != entry.term || existing.command_hash != entry.command_hash {
+                    self.log.truncate(expected_index as usize - 1);
+                }
+            }
+            if expected_index as usize > self.log.len() {
+                if self.log.len() >= self.max_log_entries {
+                    return Err(ConsensusError::LogLimitReached);
+                }
+                self.log.push(entry);
+            }
+        }
+        self.role = ConsensusRole::Follower;
+        self.votes_received.clear();
+        self.commit_index = self.commit_index.max(delta.leader_commit.min(delta.target_index));
+        self.commit_index = self.commit_index.min(self.log.len() as u64);
+        self.apply_committed();
+        Ok(delta.target_index)
+    }
+
+    pub fn prepare_concurrent_catch_up(
+        &self,
+        follower_ids: &[String],
+    ) -> Result<BTreeMap<String, StateDelta>, ConsensusError> {
+        if follower_ids.len() > MAX_MEMBERS {
+            return Err(ConsensusError::IncrementalSyncConflict(
+                "too many concurrent followers".into(),
+            ));
+        }
+        let mut unique = BTreeSet::new();
+        for follower_id in follower_ids {
+            validate_node_id(follower_id)?;
+            if !unique.insert(follower_id.clone()) {
+                return Err(ConsensusError::IncrementalSyncConflict(
+                    "duplicate follower in concurrent catch-up".into(),
+                ));
+            }
+        }
+        std::thread::scope(|scope| {
+            let handles = follower_ids
+                .iter()
+                .map(|follower_id| {
+                    let follower_id = follower_id.clone();
+                    scope.spawn(move || {
+                        self.incremental_delta_for(&follower_id)
+                            .map(|delta| (follower_id, delta))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut plans = BTreeMap::new();
+            for handle in handles {
+                let (follower_id, delta) = handle
+                    .join()
+                    .map_err(|_| ConsensusError::IncrementalSyncConflict("catch-up worker panicked".into()))??;
+                if let Some(delta) = delta {
+                    plans.insert(follower_id, delta);
+                }
+            }
+            Ok(plans)
+        })
+    }
+
     pub fn append_entries_for(&self, follower_id: &str) -> Result<AppendEntries, ConsensusError> {
         if self.role != ConsensusRole::Leader {
             return Err(ConsensusError::NotLeader);
@@ -1171,6 +1641,9 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::VoteResponse(value) => value.term,
         ConsensusMessage::AppendEntries(value) => value.term,
         ConsensusMessage::AppendResponse(value) => value.term,
+        ConsensusMessage::SnapshotManifest(value) => value.term,
+        ConsensusMessage::SnapshotChunk(value) => value.term,
+        ConsensusMessage::StateDelta(value) => value.term,
     }
 }
 
@@ -1178,6 +1651,30 @@ fn validate_nonce(nonce: &str) -> Result<(), ConsensusError> {
     if nonce.trim().is_empty() || nonce.len() > MAX_NONCE_BYTES || nonce.chars().any(char::is_control) {
         return Err(ConsensusError::Unauthenticated(
             "consensus nonce must be bounded and contain no control characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn validate_hex_digest(value: &str) -> Result<(), ConsensusError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ConsensusError::InvalidSnapshotChunk(
+            "digest must be exactly 64 hexadecimal characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transfer_id(id: &str) -> Result<(), ConsensusError> {
+    if id.trim().is_empty() || id.len() > MAX_CLUSTER_ID_BYTES || id.chars().any(char::is_control) {
+        return Err(ConsensusError::InvalidSnapshotChunk(
+            "transfer ID must be 1 to 128 bytes and contain no control characters".into(),
         ));
     }
     Ok(())

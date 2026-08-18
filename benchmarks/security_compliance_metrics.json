@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 29.825,
-        "verification_throughput_ops_per_sec": 34402.17520275063
+        "verification_p95_us": 39.179,
+        "verification_throughput_ops_per_sec": 27310.23050055769
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.644,
-        "verification_throughput_ops_per_sec": 33476.8510736528
+        "verification_p95_us": 36.124,
+        "verification_throughput_ops_per_sec": 27327.41605708547
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 29.565,
-        "verification_throughput_ops_per_sec": 33396.20725953394
+        "verification_p95_us": 36.074,
+        "verification_throughput_ops_per_sec": 27316.937252312197
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "f21048b40bd198b9822a3bc7b8b567f22751969c",
+  "commit": "24ab43f90b732beb7ada8fb7ff5aaf6a6e7947dc",
   "gates": {
     "authenticated_consensus_transport": "passed",
     "authenticated_partition_benchmark": "passed",
@@ -55,15 +55,18 @@
     "durable_external_audit_sink": "passed",
     "failure_injection_snapshot_recovery": "passed",
     "helm_fail_closed": "passed",
+    "incremental_state_sync": "passed",
+    "network_stress_packet_corruption": "passed",
     "phase11_membership_change": "passed",
     "python_tests": "passed",
     "replay_window_and_cluster_binding": "passed",
     "rust_all_targets": "passed",
     "signer_rotation_revocation": "passed",
     "skill_validation": "passed",
+    "snapshot_chunk_streaming": "passed",
     "snapshot_installation": "passed"
   },
-  "generated_at_utc": "2026-08-18T00:50:16.999159+00:00",
+  "generated_at_utc": "2026-08-18T02:30:39.480781+00:00",
   "operations": [
     {
       "baseline_errors": 0,

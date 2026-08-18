@@ -34,6 +34,10 @@ cargo test --test failure_injection_integration >"$TMP_DIR/failure-injection.log
 
 printf '%s\n' '== Phase 12 authenticated socket transport =='
 cargo test --test phase12_transport_integration >"$TMP_DIR/phase12.log"
+
+printf '%s\n' '== Phase 13 snapshot streaming and network stress =='
+cargo test --test phase13_snapshot_sync_integration >"$TMP_DIR/phase13-snapshot.log"
+cargo test --test phase13_transport_stress_integration >"$TMP_DIR/phase13-stress.log"
 cargo run --quiet --release --bin un1c0-consensus-bench > benchmarks/consensus_partition_metrics.json
 
 printf '%s\n' '== isolated Compose mTLS =='
