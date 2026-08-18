@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 30.405,
-        "verification_throughput_ops_per_sec": 33122.96891610684
+        "verification_p95_us": 28.873,
+        "verification_throughput_ops_per_sec": 34700.92513186946
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.855,
-        "verification_throughput_ops_per_sec": 33126.02148918137
+        "verification_p95_us": 28.672,
+        "verification_throughput_ops_per_sec": 34385.216588085554
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 29.874,
-        "verification_throughput_ops_per_sec": 33007.79532724312
+        "verification_p95_us": 28.583,
+        "verification_throughput_ops_per_sec": 33465.82243273061
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "7dd131b86fc2981ba83edfd45a8414ccb3c728e2",
+  "commit": "6c866a5150ba58d26c3c2e822d4222257f871e7e",
   "gates": {
     "authenticated_consensus_transport": "passed",
     "authenticated_partition_benchmark": "passed",
@@ -55,8 +55,11 @@
     "compose_mtls_smoke": "passed",
     "configuration_bound_snapshots": "passed",
     "durable_compaction_manifests": "passed",
+    "durable_consensus_state_recovery": "passed",
     "durable_external_audit_sink": "passed",
+    "durable_term_vote_persistence": "passed",
     "election_timer_safety": "passed",
+    "epoch_bound_replay_window": "passed",
     "failure_detector_boundaries": "passed",
     "failure_injection_snapshot_recovery": "passed",
     "helm_fail_closed": "passed",
@@ -69,6 +72,7 @@
     "python_tests": "passed",
     "remote_audit_ordering": "passed",
     "remote_audit_outbox_durability": "passed",
+    "replay_term_floor": "passed",
     "replay_window_and_cluster_binding": "passed",
     "replication_backpressure_boundaries": "passed",
     "replication_flow_control": "passed",
@@ -84,7 +88,7 @@
     "snapshot_installation": "passed",
     "snapshot_transfer_metrics": "passed"
   },
-  "generated_at_utc": "2026-08-18T06:09:33.147460+00:00",
+  "generated_at_utc": "2026-08-18T14:54:59.915977+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -171,10 +175,10 @@
       "operations": 128,
       "p50_us": 2,
       "p95_us": 2,
-      "p99_us": 4,
+      "p99_us": 3,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 201599.2490427973
+      "throughput_ops_per_sec": 199735.97400935637
     },
     {
       "concurrency": 1,
@@ -182,120 +186,120 @@
       "operations": 128,
       "p50_us": 4,
       "p95_us": 5,
-      "p99_us": 9,
+      "p99_us": 8,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 177772.34584498807
+      "throughput_ops_per_sec": 176634.5596555626
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 12,
-      "p99_us": 30,
+      "p50_us": 10,
+      "p95_us": 18,
+      "p99_us": 38,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 98706.59656956019
+      "throughput_ops_per_sec": 104234.44280582832
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 14,
-      "p99_us": 227,
+      "p50_us": 9,
+      "p95_us": 10,
+      "p99_us": 14,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 86746.52090540326
+      "throughput_ops_per_sec": 123848.53517661236
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 156,
-      "p99_us": 369,
+      "p95_us": 30,
+      "p99_us": 244,
       "path": "lease_fast_path",
       "successful": 512,
-      "throughput_ops_per_sec": 92884.77244863489
+      "throughput_ops_per_sec": 88664.91761262783
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 99,
-      "p99_us": 301,
+      "p95_us": 21,
+      "p99_us": 763,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 94154.18372828134
+      "throughput_ops_per_sec": 87374.14581959935
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
-      "p50_us": 12,
-      "p95_us": 318,
-      "p99_us": 942,
+      "p50_us": 11,
+      "p95_us": 138,
+      "p99_us": 1547,
       "path": "lease_fast_path",
       "successful": 1024,
-      "throughput_ops_per_sec": 86743.99306319132
+      "throughput_ops_per_sec": 88445.72360607726
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
-      "p50_us": 12,
-      "p95_us": 401,
-      "p99_us": 1012,
+      "p50_us": 11,
+      "p95_us": 32,
+      "p99_us": 2282,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 79257.53031677935
+      "throughput_ops_per_sec": 87697.58720300364
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
-      "p50_us": 12,
-      "p95_us": 633,
-      "p99_us": 2482,
+      "p50_us": 11,
+      "p95_us": 602,
+      "p99_us": 2783,
       "path": "lease_fast_path",
       "successful": 2048,
-      "throughput_ops_per_sec": 85646.30634830664
+      "throughput_ops_per_sec": 89453.03313920395
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
-      "p50_us": 12,
-      "p95_us": 784,
-      "p99_us": 2413,
+      "p50_us": 11,
+      "p95_us": 756,
+      "p99_us": 2815,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 87013.87582406134
+      "throughput_ops_per_sec": 86317.40570676907
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1587,
-      "p99_us": 4593,
+      "p95_us": 1337,
+      "p99_us": 5473,
       "path": "lease_fast_path",
       "successful": 4096,
-      "throughput_ops_per_sec": 91820.99550727222
+      "throughput_ops_per_sec": 90072.39480771347
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1731,
-      "p99_us": 4496,
+      "p95_us": 1404,
+      "p99_us": 5294,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 86524.20746012309
+      "throughput_ops_per_sec": 92346.15622990143
     }
   ],
   "phase15_election_timers": {
@@ -364,6 +368,17 @@
     "per_follower_isolation": true,
     "rolling_window_is_bounded": true,
     "transport_storage_and_scheduler": "deployment_boundary"
+  },
+  "phase22_durable_term_replay": {
+    "bounded_nonce_eviction_is_preserved": true,
+    "persistence_and_socket_authority": "deployment_boundary",
+    "replay_epoch_is_signature_bound": true,
+    "replay_epoch_rotation_clears_windows": true,
+    "replay_term_floor_rejects_stale_envelopes": true,
+    "same_term_vote_exclusivity_survives_restore": true,
+    "staging_recovery_removes_partial_state": true,
+    "term_and_vote_atomic_state_hash": true,
+    "term_vote_restore_rejects_rollback": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,
