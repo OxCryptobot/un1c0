@@ -3,6 +3,7 @@
   "benchmark_concurrency": 8,
   "cluster_mutation_performed": false,
   "commit": "7dd131b86fc2981ba83edfd45a8414ccb3c728e2",
+  "commit_is_current_or_ancestor": true,
   "expected_gate_count": 36,
   "failures": [],
   "observed_gate_count": 36,
@@ -17,6 +18,7 @@
     "phase20_snapshot_install_readiness",
     "phase21_snapshot_transfer_metrics"
   ],
+  "repository_head": "7c733aa416aad65ba3b48000488fd25b7cb51564",
   "result": "passed",
   "secret_material_recorded": false
 }

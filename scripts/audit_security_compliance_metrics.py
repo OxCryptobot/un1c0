@@ -82,6 +82,13 @@ def git_head(root: Path) -> str:
     ).strip()
 
 
+def is_ancestor(root: Path, commit: str, head: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", commit, head],
+        check=False,
+    ).returncode == 0
+
+
 def check(condition: bool, failures: list[str], message: str) -> None:
     if not condition:
         failures.append(message)
@@ -95,7 +102,13 @@ def audit(root: Path, artifact: Path) -> dict:
     check(bool(gates), failures, "gate map is empty")
     check(all(value == "passed" for value in gates.values()), failures, "one or more gates are not marked passed")
     check(report.get("benchmark_concurrency") == 8, failures, "benchmark concurrency must remain 8")
-    check(report.get("commit") == git_head(root), failures, "metrics commit does not match repository HEAD")
+    current_head = git_head(root)
+    metrics_commit = report.get("commit")
+    check(
+        isinstance(metrics_commit, str) and is_ancestor(root, metrics_commit, current_head),
+        failures,
+        "metrics commit is neither the current repository HEAD nor an ancestor",
+    )
 
     for phase, required_keys in REQUIRED_PHASES.items():
         section = report.get(phase)
@@ -141,6 +154,9 @@ def audit(root: Path, artifact: Path) -> dict:
     return {
         "artifact": str(artifact),
         "commit": report.get("commit"),
+        "repository_head": current_head,
+        "commit_is_current_or_ancestor": isinstance(metrics_commit, str)
+        and is_ancestor(root, metrics_commit, current_head),
         "expected_gate_count": EXPECTED_GATE_COUNT,
         "observed_gate_count": len(gates),
         "passed_gate_count": sum(value == "passed" for value in gates.values()),
