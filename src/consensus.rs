@@ -2664,6 +2664,9 @@ impl AuthenticatedSocketTransport {
             return Err(ConsensusError::UnknownMember(peer_id.to_string()));
         }
         if frame_bytes == 0 || frame_bytes as usize > self.max_frame_bytes {
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.rejected_frames = quota.rejected_frames.saturating_add(1);
+            }
             return Err(ConsensusError::FrameTooLarge);
         }
         let quota = self
@@ -2718,6 +2721,9 @@ impl AuthenticatedSocketTransport {
     ) -> Result<SocketBackpressureAction, ConsensusError> {
         validate_node_id(peer_id)?;
         if frame_bytes == 0 || frame_bytes as usize > self.max_frame_bytes {
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.rejected_frames = quota.rejected_frames.saturating_add(1);
+            }
             return Err(ConsensusError::FrameTooLarge);
         }
         let quota = self
