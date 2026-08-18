@@ -154,7 +154,6 @@ def audit(root: Path, artifact: Path) -> dict:
     return {
         "artifact": str(artifact),
         "commit": report.get("commit"),
-        "repository_head": current_head,
         "commit_is_current_or_ancestor": isinstance(metrics_commit, str)
         and is_ancestor(root, metrics_commit, current_head),
         "expected_gate_count": EXPECTED_GATE_COUNT,

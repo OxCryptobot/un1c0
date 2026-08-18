@@ -18,7 +18,6 @@
     "phase20_snapshot_install_readiness",
     "phase21_snapshot_transfer_metrics"
   ],
-  "repository_head": "7c733aa416aad65ba3b48000488fd25b7cb51564",
   "result": "passed",
   "secret_material_recorded": false
 }
