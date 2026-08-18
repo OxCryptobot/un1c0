@@ -73,6 +73,8 @@ printf '%s\n' '== Phase 27 replicated delivery acknowledgements and ownership ==
 scripts/validate_phase27_replicated_delivery_ownership.sh >"$TMP_DIR/phase27-replicated-delivery-ownership.log"
 printf '%s\n' '== Phase 28 partition-aware ownership fencing =='
 scripts/validate_phase28_partition_ownership_fencing.sh >"$TMP_DIR/phase28-partition-ownership-fencing.log"
+printf '%s\n' '== Phase 29 authenticated remote ownership fencing =='
+scripts/validate_phase29_authenticated_remote_fencing.sh >"$TMP_DIR/phase29-authenticated-remote-fencing.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

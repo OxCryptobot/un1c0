@@ -7,8 +7,8 @@ use un1c0::{
     AuthenticatedConsensusEnvelope, AuthenticatedDeliveryAcknowledgement,
     AuthenticatedSocketTransport, ConsensusError, ConsensusMessage, DurableQueueOwnership,
     DurableSocketDeliveryAction, DurableSocketQueueState, DurableSocketQueueStore,
-    QueueOwnershipTransfer, ReplicatedDeliveryAcknowledgement, ReplicatedDeliveryAction,
-    SocketDeliveryCrashPoint, SocketQuotaConfig, VoteRequest,
+    QueueOwnershipFence, QueueOwnershipTransfer, ReplicatedDeliveryAcknowledgement,
+    ReplicatedDeliveryAction, SocketDeliveryCrashPoint, SocketQuotaConfig, VoteRequest,
 };
 
 fn signing_key(seed: u8) -> SigningKey {
@@ -93,6 +93,41 @@ fn remote_ack(
         "node-b",
         1,
         acknowledgement,
+        &signing_key(42),
+    )
+    .unwrap()
+}
+
+fn remote_fence(
+    peer_id: &str,
+    owner_id: &str,
+    owner_term: u64,
+    ownership_epoch: u64,
+    observed_tick: u64,
+    reachable_members: usize,
+    required_members: usize,
+    reason: &str,
+    sender_id: &str,
+    nonce: &str,
+) -> AuthenticatedConsensusEnvelope {
+    let fence = QueueOwnershipFence::new(
+        peer_id,
+        owner_id,
+        owner_term,
+        ownership_epoch,
+        observed_tick,
+        reachable_members,
+        required_members,
+        reason,
+    )
+    .unwrap();
+    AuthenticatedConsensusEnvelope::sign_for_cluster_epoch(
+        "cluster-alpha",
+        sender_id,
+        owner_term,
+        1,
+        nonce,
+        ConsensusMessage::QueueOwnershipFence(fence),
         &signing_key(42),
     )
     .unwrap()
@@ -244,6 +279,127 @@ fn ownership_fence_survives_restart_and_blocks_acknowledgement() {
         Err(ConsensusError::DurableQueueOwnership(_))
     ));
     assert!(restarted.durable_queue_frame("node-b").unwrap().is_some());
+}
+
+#[test]
+fn authenticated_remote_fence_observation_is_idempotent_and_blocks_delivery() {
+    let directory = tempdir().unwrap();
+    let durable_store = store(&directory);
+    let mut owner = transport("node-a");
+    owner.set_ack_quorum_size(2).unwrap();
+    owner
+        .enqueue_durable_frame_with_backpressure(
+            &durable_store,
+            "node-b",
+            &envelope("remote-fence"),
+            0,
+        )
+        .unwrap();
+    let observation = remote_fence(
+        "node-b",
+        "node-a",
+        1,
+        1,
+        12,
+        1,
+        2,
+        "remote observer reports quorum loss",
+        "node-b",
+        "remote-fence-1",
+    );
+    assert_eq!(
+        owner
+            .apply_authenticated_queue_ownership_fence(&durable_store, &observation)
+            .unwrap(),
+        DurableSocketDeliveryAction::OwnershipFenced {
+            peer_id: "node-b".into(),
+            owner_id: "node-a".into(),
+            ownership_epoch: 1,
+            retry_at_tick: 12,
+        }
+    );
+    let first_hash = owner.durable_queue_state().unwrap().state_hash;
+    assert_eq!(
+        owner
+            .apply_authenticated_queue_ownership_fence(&durable_store, &observation)
+            .unwrap(),
+        DurableSocketDeliveryAction::OwnershipFenced {
+            peer_id: "node-b".into(),
+            owner_id: "node-a".into(),
+            ownership_epoch: 1,
+            retry_at_tick: 12,
+        }
+    );
+    assert_eq!(owner.durable_queue_state().unwrap().state_hash, first_hash);
+
+    let (_listener, mut stream) = connect_pair();
+    assert!(matches!(
+        owner
+            .deliver_next_durable_frame(
+                &durable_store,
+                &mut stream,
+                "node-b",
+                13,
+                SocketDeliveryCrashPoint::None,
+            )
+            .unwrap(),
+        DurableSocketDeliveryAction::OwnershipFenced { .. }
+    ));
+    assert!(owner.durable_queue_frame("node-b").unwrap().is_some());
+}
+
+#[test]
+fn tampered_or_misbinding_remote_fence_fails_without_mutation() {
+    let directory = tempdir().unwrap();
+    let durable_store = store(&directory);
+    let mut owner = transport("node-a");
+    owner.set_ack_quorum_size(2).unwrap();
+    owner
+        .enqueue_durable_frame_with_backpressure(
+            &durable_store,
+            "node-b",
+            &envelope("remote-fence-reject"),
+            0,
+        )
+        .unwrap();
+    let before = owner.durable_queue_state().unwrap().state_hash;
+
+    let mut tampered = remote_fence(
+        "node-b",
+        "node-a",
+        1,
+        1,
+        12,
+        1,
+        2,
+        "tampered signature",
+        "node-b",
+        "remote-fence-tampered",
+    );
+    tampered.signature[0] ^= 1;
+    assert!(matches!(
+        owner.apply_authenticated_queue_ownership_fence(&durable_store, &tampered),
+        Err(ConsensusError::Unauthenticated(_))
+    ));
+
+    let misbound = remote_fence(
+        "node-b",
+        "node-b",
+        1,
+        1,
+        12,
+        1,
+        2,
+        "wrong owner binding",
+        "node-b",
+        "remote-fence-misbinding",
+    );
+    assert!(matches!(
+        owner.apply_authenticated_queue_ownership_fence(&durable_store, &misbound),
+        Err(ConsensusError::DurableQueueOwnership(_))
+    ));
+    assert_eq!(owner.durable_queue_state().unwrap().state_hash, before);
+    assert!(owner.ownership_fence("node-b").unwrap().is_none());
 }
 
 #[test]

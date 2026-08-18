@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 34.392,
-        "verification_throughput_ops_per_sec": 33524.64889417293
+        "verification_p95_us": 30.436,
+        "verification_throughput_ops_per_sec": 34608.45689414777
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.815,
-        "verification_throughput_ops_per_sec": 33059.92196260509
+        "verification_p95_us": 28.533,
+        "verification_throughput_ops_per_sec": 34390.38288991341
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 30.166,
-        "verification_throughput_ops_per_sec": 32435.32487444385
+        "verification_p95_us": 28.513,
+        "verification_throughput_ops_per_sec": 34472.14357785704
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "02f57ec4e534a46672a19bbfb40468218c2092dd",
+  "commit": "0f382fa4d1df82606b278f41e74fc44d13114844",
   "gates": {
     "atomic_queue_cutover": "passed",
     "authenticated_ack_binding": "passed",
@@ -53,6 +53,7 @@
     "authenticated_delivery_ack_order": "passed",
     "authenticated_durable_delivery": "passed",
     "authenticated_partition_benchmark": "passed",
+    "authenticated_remote_fence_observation": "passed",
     "authenticated_socket_transport": "passed",
     "cli_smoke": "passed",
     "compaction_quorum_admission": "passed",
@@ -91,6 +92,9 @@
     "receive_window_admission": "passed",
     "remote_audit_ordering": "passed",
     "remote_audit_outbox_durability": "passed",
+    "remote_fence_idempotent": "passed",
+    "remote_fence_misbinding_rejected": "passed",
+    "remote_fence_owner_term_binding": "passed",
     "replay_term_floor": "passed",
     "replay_window_and_cluster_binding": "passed",
     "replicated_ack_quorum": "passed",
@@ -112,7 +116,7 @@
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed"
   },
-  "generated_at_utc": "2026-08-18T22:16:43.644717+00:00",
+  "generated_at_utc": "2026-08-18T22:34:46.296357+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -198,132 +202,132 @@
       "errors": 0,
       "operations": 128,
       "p50_us": 2,
-      "p95_us": 3,
-      "p99_us": 7,
+      "p95_us": 2,
+      "p99_us": 5,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 196946.7105283403
+      "throughput_ops_per_sec": 173984.19734157584
     },
     {
       "concurrency": 1,
       "errors": 0,
       "operations": 128,
       "p50_us": 4,
-      "p95_us": 6,
-      "p99_us": 8,
+      "p95_us": 9,
+      "p99_us": 11,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 177917.14620897482
+      "throughput_ops_per_sec": 152993.65554434666
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 21,
-      "p99_us": 126,
+      "p50_us": 10,
+      "p95_us": 11,
+      "p99_us": 64,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 95979.07656130963
+      "throughput_ops_per_sec": 110607.71160421796
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 19,
-      "p99_us": 325,
+      "p50_us": 9,
+      "p95_us": 10,
+      "p99_us": 13,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 88088.81003716936
+      "throughput_ops_per_sec": 123158.87109499781
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 126,
-      "p99_us": 701,
+      "p95_us": 151,
+      "p99_us": 515,
       "path": "lease_fast_path",
       "successful": 512,
-      "throughput_ops_per_sec": 87621.75059358601
+      "throughput_ops_per_sec": 86450.4022054308
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
-      "p50_us": 11,
-      "p95_us": 47,
-      "p99_us": 464,
+      "p50_us": 10,
+      "p95_us": 34,
+      "p99_us": 716,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 86415.57316647927
+      "throughput_ops_per_sec": 97660.10582769515
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 316,
-      "p99_us": 1203,
+      "p95_us": 259,
+      "p99_us": 1002,
       "path": "lease_fast_path",
       "successful": 1024,
-      "throughput_ops_per_sec": 95444.46548862348
+      "throughput_ops_per_sec": 90217.86380661943
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 193,
-      "p99_us": 1355,
+      "p95_us": 344,
+      "p99_us": 1139,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 86777.08712029728
+      "throughput_ops_per_sec": 90146.58239252375
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 482,
-      "p99_us": 2749,
+      "p95_us": 491,
+      "p99_us": 3404,
       "path": "lease_fast_path",
       "successful": 2048,
-      "throughput_ops_per_sec": 90724.87045126408
+      "throughput_ops_per_sec": 92003.8832107738
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 503,
-      "p99_us": 3113,
+      "p95_us": 655,
+      "p99_us": 2723,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 86826.12771156768
+      "throughput_ops_per_sec": 87078.47671341678
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1355,
-      "p99_us": 4580,
+      "p95_us": 1104,
+      "p99_us": 4562,
       "path": "lease_fast_path",
       "successful": 4096,
-      "throughput_ops_per_sec": 89050.50550728242
+      "throughput_ops_per_sec": 98766.32040503259
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1370,
-      "p99_us": 4537,
+      "p95_us": 1366,
+      "p99_us": 4696,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 91856.90344996231
+      "throughput_ops_per_sec": 91217.42548570775
     }
   ],
   "phase15_election_timers": {
@@ -461,6 +465,13 @@
     "network_failure_detector_and_clock_authority": "deployment_boundary",
     "ownership_transfer_clears_fence": true,
     "quorum_loss_fences_delivery": true
+  },
+  "phase29_authenticated_remote_fencing": {
+    "authenticated_remote_fence_observation": true,
+    "failure_detector_quorum_authority": "deployment_boundary",
+    "remote_fence_idempotent": true,
+    "remote_fence_misbinding_rejected": true,
+    "remote_fence_owner_term_binding": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,

@@ -546,6 +546,7 @@ pub enum ConsensusMessage {
     ReplicationBatchAck(ReplicationBatchAck),
     SnapshotInstallAck(SnapshotInstallAck),
     ReplicatedDeliveryAcknowledgement(ReplicatedDeliveryAcknowledgement),
+    QueueOwnershipFence(QueueOwnershipFence),
     QueueOwnershipTransfer(QueueOwnershipTransfer),
 }
 
@@ -3447,6 +3448,87 @@ impl AuthenticatedSocketTransport {
             owner_id: fence.owner_id,
             ownership_epoch: fence.ownership_epoch,
             retry_at_tick: observed_tick,
+        })
+    }
+
+    pub fn apply_authenticated_queue_ownership_fence(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        envelope: &AuthenticatedConsensusEnvelope,
+    ) -> Result<DurableSocketDeliveryAction, ConsensusError> {
+        let trusted_key = self
+            .trusted_keys
+            .get(&envelope.sender_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &envelope.sender_id,
+            &trusted_key,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        let fence = match &envelope.message {
+            ConsensusMessage::QueueOwnershipFence(value) => value.clone(),
+            _ => {
+                return Err(ConsensusError::DurableQueueOwnership(
+                    "envelope does not contain a queue ownership fence".into(),
+                ))
+            }
+        };
+        fence.validate()?;
+        if fence.owner_id != self.node_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "remote fence is not addressed to the current owner".into(),
+            ));
+        }
+        let ownership = self.queue_ownership(&fence.peer_id)?;
+        if ownership.owner_id != self.node_id
+            || fence.owner_term != ownership.owner_term
+            || fence.ownership_epoch != ownership.ownership_epoch
+            || fence.required_members != self.ack_quorum_size
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "remote fence is not bound to the active ownership lease".into(),
+            ));
+        }
+        if let Some(existing) = self.ownership_fences.get(&fence.peer_id) {
+            if existing.fence_hash == fence.fence_hash
+                || existing.observed_tick > fence.observed_tick
+            {
+                return Ok(DurableSocketDeliveryAction::OwnershipFenced {
+                    peer_id: existing.peer_id.clone(),
+                    owner_id: existing.owner_id.clone(),
+                    ownership_epoch: existing.ownership_epoch,
+                    retry_at_tick: existing.observed_tick,
+                });
+            }
+            if existing.observed_tick == fence.observed_tick {
+                return Err(ConsensusError::DurableQueueOwnership(
+                    "remote fence conflicts with an observation at the same tick".into(),
+                ));
+            }
+        }
+        let previous = self
+            .ownership_fences
+            .insert(fence.peer_id.clone(), fence.clone());
+        if let Err(error) = self.persist_durable_queue(store) {
+            match previous {
+                Some(previous) => {
+                    self.ownership_fences
+                        .insert(fence.peer_id.clone(), previous);
+                }
+                None => {
+                    self.ownership_fences.remove(&fence.peer_id);
+                }
+            }
+            return Err(error);
+        }
+        Ok(DurableSocketDeliveryAction::OwnershipFenced {
+            peer_id: fence.peer_id,
+            owner_id: fence.owner_id,
+            ownership_epoch: fence.ownership_epoch,
+            retry_at_tick: fence.observed_tick,
         })
     }
 
@@ -7457,6 +7539,7 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::ReplicationBatchAck(value) => value.response.term,
         ConsensusMessage::SnapshotInstallAck(value) => value.term,
         ConsensusMessage::ReplicatedDeliveryAcknowledgement(value) => value.acknowledgement_term,
+        ConsensusMessage::QueueOwnershipFence(value) => value.owner_term,
         ConsensusMessage::QueueOwnershipTransfer(value) => value.owner_term,
     }
 }
