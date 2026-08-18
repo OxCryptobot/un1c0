@@ -36,6 +36,7 @@ const MAX_RETAINED_LOG_ENTRIES: usize = MAX_LOG_ENTRIES;
 const MAX_COMPACTION_MANIFEST_BYTES: u64 = 128 * 1024;
 const MAX_SNAPSHOT_BANDWIDTH_BYTES: u64 = MAX_SNAPSHOT_BYTES;
 const MAX_SNAPSHOT_BANDWIDTH_WINDOW_TICKS: u64 = MAX_ELECTION_TICKS;
+const MAX_DURABLE_CONSENSUS_STATE_BYTES: u64 = 128 * 1024;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -117,6 +118,12 @@ pub enum ConsensusError {
     SnapshotBandwidth(String),
     #[error("snapshot cancellation violation: {0}")]
     SnapshotCancellation(String),
+    #[error("durable consensus state violation: {0}")]
+    DurableConsensusState(String),
+    #[error("authenticated replay epoch mismatch: expected {expected}, received {received}")]
+    ReplayEpochMismatch { expected: u64, received: u64 },
+    #[error("authenticated envelope term is below the replay floor")]
+    StaleReplayTerm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1270,10 +1277,165 @@ impl StateDelta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurableConsensusState {
+    pub cluster_id: String,
+    pub node_id: String,
+    pub current_term: u64,
+    pub voted_for: Option<String>,
+    pub replay_epoch: u64,
+    pub replay_term_floor: u64,
+    pub state_hash: String,
+}
+
+impl DurableConsensusState {
+    pub fn new(
+        cluster_id: &str,
+        node_id: &str,
+        current_term: u64,
+        voted_for: Option<String>,
+        replay_epoch: u64,
+        replay_term_floor: u64,
+    ) -> Result<Self, ConsensusError> {
+        let mut state = Self {
+            cluster_id: cluster_id.to_string(),
+            node_id: node_id.to_string(),
+            current_term,
+            voted_for,
+            replay_epoch,
+            replay_term_floor,
+            state_hash: String::new(),
+        };
+        state.validate_identity()?;
+        state.state_hash = state.content_hash()?;
+        Ok(state)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_cluster_id(&self.cluster_id)?;
+        validate_node_id(&self.node_id)?;
+        if let Some(voted_for) = &self.voted_for {
+            validate_node_id(voted_for)?;
+        }
+        if self.replay_epoch == 0 || self.replay_term_floor == 0 {
+            return Err(ConsensusError::DurableConsensusState(
+                "replay epoch and term floor must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.cluster_id,
+            &self.node_id,
+            self.current_term,
+            &self.voted_for,
+            self.replay_epoch,
+            self.replay_term_floor,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.state_hash).map_err(|_| {
+            ConsensusError::DurableConsensusState("state hash must be a SHA-256 digest".into())
+        })?;
+        if self.content_hash()? != self.state_hash {
+            return Err(ConsensusError::DurableConsensusState(
+                "durable consensus state hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableConsensusStateStore {
+    path: PathBuf,
+}
+
+impl DurableConsensusStateStore {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
+
+    fn staging_path(&self) -> PathBuf {
+        self.path.with_extension("state.tmp")
+    }
+
+    pub fn save(&self, state: &DurableConsensusState) -> Result<(), ConsensusError> {
+        state.validate()?;
+        let bytes = serde_json::to_vec(state)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() as u64 > MAX_DURABLE_CONSENSUS_STATE_BYTES {
+            return Err(ConsensusError::DurableConsensusState(
+                "durable state exceeds the configured byte bound".into(),
+            ));
+        }
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?;
+        let temporary = self.staging_path();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?;
+        let result = file
+            .write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .and_then(|_| fs::rename(&temporary, &self.path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result.map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?;
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
+    pub fn recover_staging(&self) -> Result<bool, ConsensusError> {
+        let temporary = self.staging_path();
+        if !temporary.exists() {
+            return Ok(false);
+        }
+        fs::remove_file(&temporary)
+            .map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?;
+        if let Some(parent) = self.path.parent() {
+            if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+                let _ = directory.sync_all();
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn load(&self) -> Result<DurableConsensusState, ConsensusError> {
+        let metadata = fs::metadata(&self.path)
+            .map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?;
+        if metadata.len() > MAX_DURABLE_CONSENSUS_STATE_BYTES {
+            return Err(ConsensusError::DurableConsensusState(
+                "durable state exceeds the configured byte bound".into(),
+            ));
+        }
+        let state: DurableConsensusState = serde_json::from_slice(
+            &fs::read(&self.path)
+                .map_err(|error| ConsensusError::DurableConsensusState(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthenticatedConsensusEnvelope {
     pub cluster_id: String,
     pub sender_id: String,
     pub term: u64,
+    pub replay_epoch: u64,
     pub nonce: String,
     pub message: ConsensusMessage,
     pub public_key: Vec<u8>,
@@ -1285,6 +1447,8 @@ pub struct ReplayWindow {
     cluster_id: String,
     sender_id: String,
     max_entries: usize,
+    replay_epoch: u64,
+    min_term: u64,
     next_sequence: u64,
     seen: BTreeMap<String, u64>,
 }
@@ -1295,6 +1459,16 @@ impl ReplayWindow {
         sender_id: &str,
         max_entries: usize,
     ) -> Result<Self, ConsensusError> {
+        Self::new_with_epoch(cluster_id, sender_id, max_entries, 1, 1)
+    }
+
+    pub fn new_with_epoch(
+        cluster_id: &str,
+        sender_id: &str,
+        max_entries: usize,
+        replay_epoch: u64,
+        min_term: u64,
+    ) -> Result<Self, ConsensusError> {
         validate_cluster_id(cluster_id)?;
         validate_node_id(sender_id)?;
         if max_entries == 0 || max_entries > MAX_LOG_ENTRIES {
@@ -1302,10 +1476,17 @@ impl ReplayWindow {
                 "replay window must be between 1 and the log bound".into(),
             ));
         }
+        if replay_epoch == 0 || min_term == 0 {
+            return Err(ConsensusError::InvalidClusterConfiguration(
+                "replay epoch and minimum term must be positive".into(),
+            ));
+        }
         Ok(Self {
             cluster_id: cluster_id.to_string(),
             sender_id: sender_id.to_string(),
             max_entries,
+            replay_epoch,
+            min_term,
             next_sequence: 0,
             seen: BTreeMap::new(),
         })
@@ -1316,7 +1497,13 @@ impl ReplayWindow {
         envelope: &AuthenticatedConsensusEnvelope,
         trusted_key: &[u8],
     ) -> Result<(), ConsensusError> {
-        envelope.verify_for_cluster(&self.cluster_id, &self.sender_id, trusted_key)?;
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &self.sender_id,
+            trusted_key,
+            self.replay_epoch,
+            self.min_term,
+        )?;
         if self.seen.contains_key(&envelope.nonce) {
             return Err(ConsensusError::ReplayDetected);
         }
@@ -1341,6 +1528,14 @@ impl ReplayWindow {
     pub fn len(&self) -> usize {
         self.seen.len()
     }
+
+    pub fn replay_epoch(&self) -> u64 {
+        self.replay_epoch
+    }
+
+    pub fn min_term(&self) -> u64 {
+        self.min_term
+    }
 }
 
 impl AuthenticatedConsensusEnvelope {
@@ -1351,10 +1546,11 @@ impl AuthenticatedConsensusEnvelope {
         message: ConsensusMessage,
         signing_key: &SigningKey,
     ) -> Result<Self, ConsensusError> {
-        Self::sign_for_cluster(
+        Self::sign_for_cluster_epoch(
             DEFAULT_CLUSTER_ID,
             sender_id,
             term,
+            1,
             nonce,
             message,
             signing_key,
@@ -1369,9 +1565,26 @@ impl AuthenticatedConsensusEnvelope {
         message: ConsensusMessage,
         signing_key: &SigningKey,
     ) -> Result<Self, ConsensusError> {
+        Self::sign_for_cluster_epoch(cluster_id, sender_id, term, 1, nonce, message, signing_key)
+    }
+
+    pub fn sign_for_cluster_epoch(
+        cluster_id: &str,
+        sender_id: &str,
+        term: u64,
+        replay_epoch: u64,
+        nonce: &str,
+        message: ConsensusMessage,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ConsensusError> {
         validate_cluster_id(cluster_id)?;
         validate_node_id(sender_id)?;
         validate_nonce(nonce)?;
+        if replay_epoch == 0 {
+            return Err(ConsensusError::Unauthenticated(
+                "replay epoch must be positive".into(),
+            ));
+        }
         if term == 0 || message_term(&message) != term {
             return Err(ConsensusError::Unauthenticated(
                 "envelope term must be positive and match the message term".into(),
@@ -1382,6 +1595,7 @@ impl AuthenticatedConsensusEnvelope {
             cluster_id: cluster_id.to_string(),
             sender_id: sender_id.to_string(),
             term,
+            replay_epoch,
             nonce: nonce.to_string(),
             message,
             public_key,
@@ -1406,8 +1620,33 @@ impl AuthenticatedConsensusEnvelope {
         expected_sender_id: &str,
         trusted_key: &[u8],
     ) -> Result<(), ConsensusError> {
+        self.verify_for_cluster_epoch(expected_cluster_id, expected_sender_id, trusted_key, 1, 1)
+    }
+
+    pub fn verify_for_cluster_epoch(
+        &self,
+        expected_cluster_id: &str,
+        expected_sender_id: &str,
+        trusted_key: &[u8],
+        expected_replay_epoch: u64,
+        min_term: u64,
+    ) -> Result<(), ConsensusError> {
         self.verify_cluster_sender(expected_cluster_id, expected_sender_id)?;
         validate_nonce(&self.nonce)?;
+        if expected_replay_epoch == 0 || min_term == 0 {
+            return Err(ConsensusError::Unauthenticated(
+                "expected replay epoch and minimum term must be positive".into(),
+            ));
+        }
+        if self.replay_epoch != expected_replay_epoch {
+            return Err(ConsensusError::ReplayEpochMismatch {
+                expected: expected_replay_epoch,
+                received: self.replay_epoch,
+            });
+        }
+        if self.term < min_term {
+            return Err(ConsensusError::StaleReplayTerm);
+        }
         if self.term == 0 || message_term(&self.message) != self.term {
             return Err(ConsensusError::Unauthenticated(
                 "term or message binding mismatch".into(),
@@ -1454,6 +1693,7 @@ impl AuthenticatedConsensusEnvelope {
             &self.cluster_id,
             &self.sender_id,
             self.term,
+            self.replay_epoch,
             &self.nonce,
             &self.message,
             &self.public_key,
@@ -1468,6 +1708,9 @@ pub struct AuthenticatedSocketTransport {
     node_id: String,
     trusted_keys: BTreeMap<String, Vec<u8>>,
     replay_windows: BTreeMap<String, ReplayWindow>,
+    replay_epoch: u64,
+    replay_term_floor: u64,
+    replay_window_entries: usize,
     max_frame_bytes: usize,
 }
 
@@ -1478,6 +1721,24 @@ impl AuthenticatedSocketTransport {
         trusted_keys: BTreeMap<String, Vec<u8>>,
         replay_window_entries: usize,
     ) -> Result<Self, ConsensusError> {
+        Self::new_with_epoch(
+            cluster_id,
+            node_id,
+            trusted_keys,
+            replay_window_entries,
+            1,
+            1,
+        )
+    }
+
+    pub fn new_with_epoch(
+        cluster_id: &str,
+        node_id: &str,
+        trusted_keys: BTreeMap<String, Vec<u8>>,
+        replay_window_entries: usize,
+        replay_epoch: u64,
+        replay_term_floor: u64,
+    ) -> Result<Self, ConsensusError> {
         validate_cluster_id(cluster_id)?;
         validate_node_id(node_id)?;
         validate_members(&trusted_keys.keys().cloned().collect())?;
@@ -1486,11 +1747,22 @@ impl AuthenticatedSocketTransport {
                 "transport node must have a trusted public key".into(),
             ));
         }
+        if replay_epoch == 0 || replay_term_floor == 0 {
+            return Err(ConsensusError::InvalidClusterConfiguration(
+                "replay epoch and term floor must be positive".into(),
+            ));
+        }
         let mut replay_windows = BTreeMap::new();
         for sender_id in trusted_keys.keys() {
             replay_windows.insert(
                 sender_id.clone(),
-                ReplayWindow::new(cluster_id, sender_id, replay_window_entries)?,
+                ReplayWindow::new_with_epoch(
+                    cluster_id,
+                    sender_id,
+                    replay_window_entries,
+                    replay_epoch,
+                    replay_term_floor,
+                )?,
             );
         }
         Ok(Self {
@@ -1498,6 +1770,9 @@ impl AuthenticatedSocketTransport {
             node_id: node_id.to_string(),
             trusted_keys,
             replay_windows,
+            replay_epoch,
+            replay_term_floor,
+            replay_window_entries,
             max_frame_bytes: MAX_FRAME_BYTES,
         })
     }
@@ -1510,6 +1785,56 @@ impl AuthenticatedSocketTransport {
         &self.node_id
     }
 
+    pub fn replay_epoch(&self) -> u64 {
+        self.replay_epoch
+    }
+
+    pub fn replay_term_floor(&self) -> u64 {
+        self.replay_term_floor
+    }
+
+    pub fn rotate_replay_epoch(
+        &mut self,
+        replay_epoch: u64,
+        replay_term_floor: u64,
+    ) -> Result<(), ConsensusError> {
+        if replay_epoch <= self.replay_epoch {
+            return Err(ConsensusError::DurableConsensusState(
+                "replay epoch must increase monotonically".into(),
+            ));
+        }
+        if replay_term_floor == 0 {
+            return Err(ConsensusError::DurableConsensusState(
+                "replay term floor must be positive".into(),
+            ));
+        }
+        let mut replay_windows = BTreeMap::new();
+        for sender_id in self.trusted_keys.keys() {
+            replay_windows.insert(
+                sender_id.clone(),
+                ReplayWindow::new_with_epoch(
+                    &self.cluster_id,
+                    sender_id,
+                    self.replay_window_entries,
+                    replay_epoch,
+                    replay_term_floor,
+                )?,
+            );
+        }
+        self.replay_windows = replay_windows;
+        self.replay_epoch = replay_epoch;
+        self.replay_term_floor = replay_term_floor;
+        Ok(())
+    }
+
+    pub fn replay_window_len(&self, sender_id: &str) -> Result<usize, ConsensusError> {
+        validate_node_id(sender_id)?;
+        self.replay_windows
+            .get(sender_id)
+            .map(ReplayWindow::len)
+            .ok_or_else(|| ConsensusError::UnknownMember(sender_id.to_string()))
+    }
+
     pub fn send(
         &self,
         stream: &mut TcpStream,
@@ -1520,12 +1845,14 @@ impl AuthenticatedSocketTransport {
                 "transport cannot send on behalf of another node".into(),
             ));
         }
-        envelope.verify_for_cluster(
+        envelope.verify_for_cluster_epoch(
             &self.cluster_id,
             &envelope.sender_id,
             self.trusted_keys
                 .get(&envelope.sender_id)
                 .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?,
+            self.replay_epoch,
+            self.replay_term_floor,
         )?;
         let bytes = serde_json::to_vec(envelope)
             .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
@@ -1562,7 +1889,13 @@ impl AuthenticatedSocketTransport {
             .trusted_keys
             .get(&envelope.sender_id)
             .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
-        envelope.verify_for_cluster(&self.cluster_id, &envelope.sender_id, trusted_key)?;
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &envelope.sender_id,
+            trusted_key,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
         let window = self
             .replay_windows
             .get_mut(&envelope.sender_id)
@@ -2180,6 +2513,8 @@ pub struct ConsensusNode {
     role: ConsensusRole,
     current_term: u64,
     voted_for: Option<String>,
+    replay_epoch: u64,
+    replay_term_floor: u64,
     log: Vec<LogEntry>,
     log_base_index: u64,
     log_base_term: u64,
@@ -2251,6 +2586,8 @@ impl ConsensusNode {
             role: ConsensusRole::Follower,
             current_term: 0,
             voted_for: None,
+            replay_epoch: 1,
+            replay_term_floor: 1,
             log: Vec::new(),
             log_base_index: 0,
             log_base_term: 0,
@@ -2288,6 +2625,93 @@ impl ConsensusNode {
 
     pub fn current_term(&self) -> u64 {
         self.current_term
+    }
+
+    pub fn replay_epoch(&self) -> u64 {
+        self.replay_epoch
+    }
+
+    pub fn replay_term_floor(&self) -> u64 {
+        self.replay_term_floor
+    }
+
+    pub fn durable_consensus_state(
+        &self,
+        cluster_id: &str,
+    ) -> Result<DurableConsensusState, ConsensusError> {
+        DurableConsensusState::new(
+            cluster_id,
+            &self.id,
+            self.current_term,
+            self.voted_for.clone(),
+            self.replay_epoch,
+            self.replay_term_floor,
+        )
+    }
+
+    pub fn persist_durable_consensus_state(
+        &self,
+        cluster_id: &str,
+        store: &DurableConsensusStateStore,
+    ) -> Result<(), ConsensusError> {
+        store.save(&self.durable_consensus_state(cluster_id)?)
+    }
+
+    pub fn restore_durable_consensus_state(
+        &mut self,
+        cluster_id: &str,
+        state: DurableConsensusState,
+    ) -> Result<(), ConsensusError> {
+        state.validate()?;
+        if state.cluster_id != cluster_id || state.node_id != self.id {
+            return Err(ConsensusError::DurableConsensusState(
+                "durable state identity does not match this node".into(),
+            ));
+        }
+        if let Some(voted_for) = &state.voted_for {
+            if !self.accepted_members().contains(voted_for) {
+                return Err(ConsensusError::DurableConsensusState(
+                    "durable vote is not for an accepted member".into(),
+                ));
+            }
+        }
+        if state.current_term < self.current_term
+            || state.replay_epoch < self.replay_epoch
+            || state.replay_term_floor < self.replay_term_floor
+        {
+            return Err(ConsensusError::DurableConsensusState(
+                "durable state would roll back local term or replay state".into(),
+            ));
+        }
+        self.current_term = state.current_term;
+        self.voted_for = state.voted_for;
+        self.replay_epoch = state.replay_epoch;
+        self.replay_term_floor = state.replay_term_floor;
+        self.step_down_and_invalidate();
+        self.votes_received.clear();
+        Ok(())
+    }
+
+    fn record_current_term_for_replay(&mut self) {
+        self.replay_term_floor = self.replay_term_floor.max(self.current_term);
+    }
+
+    pub fn advance_replay_epoch(
+        &mut self,
+        next_epoch: u64,
+        next_term_floor: u64,
+    ) -> Result<(), ConsensusError> {
+        if next_epoch <= self.replay_epoch
+            || next_term_floor < self.current_term
+            || next_term_floor == 0
+        {
+            return Err(ConsensusError::DurableConsensusState(
+                "replay epoch and term floor must advance monotonically".into(),
+            ));
+        }
+        self.replay_epoch = next_epoch;
+        self.replay_term_floor = next_term_floor;
+        Ok(())
     }
 
     pub fn commit_index(&self) -> u64 {
@@ -2611,6 +3035,7 @@ impl ConsensusNode {
         }
         if request.term > self.current_term {
             self.current_term = request.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
@@ -2639,6 +3064,7 @@ impl ConsensusNode {
         self.observe_tick(now_tick);
         if response.term > self.current_term {
             self.current_term = response.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
@@ -2850,6 +3276,7 @@ impl ConsensusNode {
             ));
         }
         self.current_term = snapshot.term;
+        self.record_current_term_for_replay();
         self.step_down_and_invalidate();
         self.voted_for = None;
         self.votes_received.clear();
@@ -3173,6 +3600,7 @@ impl ConsensusNode {
         }
         if acknowledgement.term > self.current_term {
             self.current_term = acknowledgement.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             return Ok(false);
@@ -3313,6 +3741,7 @@ impl ConsensusNode {
             ));
         }
         self.current_term = snapshot.term;
+        self.record_current_term_for_replay();
         self.step_down_and_invalidate();
         self.voted_for = None;
         self.votes_received.clear();
@@ -3329,6 +3758,7 @@ impl ConsensusNode {
             .current_term
             .checked_add(1)
             .ok_or(ConsensusError::TermOverflow)?;
+        self.record_current_term_for_replay();
         self.invalidate_lease();
         self.read_rounds.clear();
         self.role = ConsensusRole::Candidate;
@@ -3354,6 +3784,7 @@ impl ConsensusNode {
         }
         if request.term > self.current_term {
             self.current_term = request.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
@@ -3390,6 +3821,7 @@ impl ConsensusNode {
         }
         if response.term > self.current_term {
             self.current_term = response.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
@@ -3511,6 +3943,7 @@ impl ConsensusNode {
         }
         if delta.term > self.current_term {
             self.current_term = delta.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
         }
@@ -3825,6 +4258,7 @@ impl ConsensusNode {
         }
         if request.term > self.current_term {
             self.current_term = request.term;
+            self.record_current_term_for_replay();
             self.voted_for = None;
         }
         self.step_down_and_invalidate();
@@ -3893,6 +4327,7 @@ impl ConsensusNode {
         }
         if response.term > self.current_term {
             self.current_term = response.term;
+            self.record_current_term_for_replay();
             self.step_down_and_invalidate();
             self.voted_for = None;
             return Ok(false);

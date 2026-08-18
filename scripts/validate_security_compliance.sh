@@ -59,6 +59,8 @@ printf '%s\n' '== Phase 20 snapshot install readiness =='
 scripts/validate_phase20_snapshot_install_readiness.sh >"$TMP_DIR/phase20-snapshot-readiness.log"
 printf '%s\n' '== Phase 21 snapshot transfer metrics and cancellation =='
 scripts/validate_phase21_snapshot_transfer_metrics.sh >"$TMP_DIR/phase21-snapshot-transfer-metrics.log"
+printf '%s\n' '== Phase 22 durable term and epoch-bound replay =='
+scripts/validate_phase22_durable_term_replay.sh >"$TMP_DIR/phase22-durable-term-replay.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
