@@ -124,6 +124,10 @@ pub enum ConsensusError {
     ReplayEpochMismatch { expected: u64, received: u64 },
     #[error("authenticated envelope term is below the replay floor")]
     StaleReplayTerm,
+    #[error("compaction coordination violation: {0}")]
+    CompactionCoordination(String),
+    #[error("snapshot request violation: {0}")]
+    SnapshotRequest(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -726,6 +730,297 @@ impl LogCompactionConfig {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionCoordinationConfig {
+    pub max_follower_lag_entries: u64,
+    pub min_safe_followers: usize,
+    pub require_quorum: bool,
+}
+
+impl Default for CompactionCoordinationConfig {
+    fn default() -> Self {
+        Self {
+            max_follower_lag_entries: MAX_LOG_ENTRIES as u64,
+            min_safe_followers: 1,
+            require_quorum: true,
+        }
+    }
+}
+
+impl CompactionCoordinationConfig {
+    pub fn new(
+        max_follower_lag_entries: u64,
+        min_safe_followers: usize,
+        require_quorum: bool,
+    ) -> Result<Self, ConsensusError> {
+        let config = Self {
+            max_follower_lag_entries,
+            min_safe_followers,
+            require_quorum,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.max_follower_lag_entries > MAX_LOG_ENTRIES as u64
+            || self.min_safe_followers > MAX_MEMBERS
+        {
+            return Err(ConsensusError::CompactionCoordination(
+                "compaction coordination bounds are invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionFollowerStatus {
+    pub follower_id: String,
+    pub match_index: u64,
+    pub target_index: u64,
+    pub lag_entries: u64,
+    pub safe_for_compaction: bool,
+}
+
+impl CompactionFollowerStatus {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.follower_id)?;
+        if self.match_index > self.target_index
+            || self.lag_entries != self.target_index.saturating_sub(self.match_index)
+        {
+            return Err(ConsensusError::CompactionCoordination(
+                "follower status frontier is inconsistent".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompactionCoordinationPlan {
+    pub leader_id: String,
+    pub target_index: u64,
+    pub target_term: u64,
+    pub commit_index: u64,
+    pub applied_index: u64,
+    pub configuration_phase: ConfigurationPhase,
+    pub configuration_hash: String,
+    pub safe_followers: Vec<CompactionFollowerStatus>,
+    pub blocked_followers: Vec<CompactionFollowerStatus>,
+    pub required_safe_followers: usize,
+    pub quorum_required: bool,
+    pub ready: bool,
+    pub plan_hash: String,
+}
+
+impl CompactionCoordinationPlan {
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.leader_id,
+            self.target_index,
+            self.target_term,
+            self.commit_index,
+            self.applied_index,
+            self.configuration_phase,
+            &self.configuration_hash,
+            &self.safe_followers,
+            &self.blocked_followers,
+            self.required_safe_followers,
+            self.quorum_required,
+            self.ready,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.leader_id)?;
+        if self.target_index == 0 || self.target_term == 0 {
+            return Err(ConsensusError::CompactionCoordination(
+                "coordination target frontier must be positive".into(),
+            ));
+        }
+        validate_hex_digest(&self.configuration_hash)?;
+        for status in self
+            .safe_followers
+            .iter()
+            .chain(self.blocked_followers.iter())
+        {
+            status.validate()?;
+        }
+        if self
+            .safe_followers
+            .iter()
+            .any(|status| !status.safe_for_compaction)
+            || self
+                .blocked_followers
+                .iter()
+                .any(|status| status.safe_for_compaction)
+        {
+            return Err(ConsensusError::CompactionCoordination(
+                "follower safety classification is inconsistent".into(),
+            ));
+        }
+        if self.ready != (self.safe_followers.len() >= self.required_safe_followers) {
+            return Err(ConsensusError::CompactionCoordination(
+                "coordination readiness is inconsistent".into(),
+            ));
+        }
+        if self.content_hash()? != self.plan_hash {
+            return Err(ConsensusError::CompactionCoordination(
+                "coordination plan hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CompactionCoordinationAction {
+    Waiting {
+        plan: CompactionCoordinationPlan,
+    },
+    Compacted {
+        plan: CompactionCoordinationPlan,
+        snapshot: ConfigurationBoundSnapshot,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SnapshotRequestReason {
+    CompactedFrontier,
+    IncrementalBaseBehind,
+    AppendPredecessorCompacted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotRequest {
+    pub request_id: String,
+    pub follower_id: String,
+    pub leader_id: String,
+    pub term: u64,
+    pub last_included_index: u64,
+    pub last_included_term: u64,
+    pub configuration_hash: String,
+    pub snapshot_sha256: Option<String>,
+    pub reason: SnapshotRequestReason,
+    pub retry_at_tick: Option<u64>,
+    pub request_hash: String,
+}
+
+impl SnapshotRequest {
+    pub fn new(
+        follower_id: &str,
+        leader_id: &str,
+        term: u64,
+        snapshot: Option<&ConfigurationBoundSnapshot>,
+        reason: SnapshotRequestReason,
+        retry_at_tick: Option<u64>,
+    ) -> Result<Self, ConsensusError> {
+        validate_node_id(follower_id)?;
+        validate_node_id(leader_id)?;
+        if follower_id == leader_id || term == 0 {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request identity or term is invalid".into(),
+            ));
+        }
+        let (last_included_index, last_included_term, configuration_hash, snapshot_sha256) =
+            if let Some(snapshot) = snapshot {
+                snapshot.validate()?;
+                let bytes = serde_json::to_vec(snapshot)
+                    .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+                (
+                    snapshot.last_included_index,
+                    snapshot.last_included_term,
+                    snapshot.configuration_hash.clone(),
+                    Some(digest_bytes(&bytes)),
+                )
+            } else {
+                (0, 0, String::new(), None)
+            };
+        let mut request = Self {
+            request_id: digest_json(&(
+                follower_id,
+                leader_id,
+                term,
+                last_included_index,
+                last_included_term,
+                &configuration_hash,
+                &snapshot_sha256,
+                reason,
+                retry_at_tick,
+            ))?,
+            follower_id: follower_id.to_string(),
+            leader_id: leader_id.to_string(),
+            term,
+            last_included_index,
+            last_included_term,
+            configuration_hash,
+            snapshot_sha256,
+            reason,
+            retry_at_tick,
+            request_hash: String::new(),
+        };
+        request.request_hash = request.content_hash()?;
+        Ok(request)
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.request_id,
+            &self.follower_id,
+            &self.leader_id,
+            self.term,
+            self.last_included_index,
+            self.last_included_term,
+            &self.configuration_hash,
+            &self.snapshot_sha256,
+            self.reason,
+            self.retry_at_tick,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_transfer_id(&self.request_id)?;
+        validate_node_id(&self.follower_id)?;
+        validate_node_id(&self.leader_id)?;
+        if self.follower_id == self.leader_id || self.term == 0 {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request identity or term is invalid".into(),
+            ));
+        }
+        if (self.last_included_index == 0) != (self.last_included_term == 0) {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request frontier must be both known or unknown".into(),
+            ));
+        }
+        if self.last_included_index == 0 {
+            if !self.configuration_hash.is_empty() || self.snapshot_sha256.is_some() {
+                return Err(ConsensusError::SnapshotRequest(
+                    "unknown snapshot frontier cannot carry snapshot bindings".into(),
+                ));
+            }
+        } else {
+            validate_hex_digest(&self.configuration_hash)?;
+        }
+        if let Some(snapshot_sha256) = &self.snapshot_sha256 {
+            validate_hex_digest(snapshot_sha256)?;
+        }
+        if self.content_hash()? != self.request_hash {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SnapshotRequestAction {
+    None,
+    Retry { retry_at_tick: u64 },
+    Request(SnapshotRequest),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2534,6 +2829,7 @@ pub struct ConsensusNode {
     replication_flow_config: ReplicationFlowConfig,
     peer_replication_flow: BTreeMap<String, PeerReplicationFlow>,
     compaction_config: LogCompactionConfig,
+    compaction_coordination_config: CompactionCoordinationConfig,
     compacted_snapshot: Option<ConfigurationBoundSnapshot>,
     snapshot_bandwidth_config: SnapshotBandwidthConfig,
     snapshot_replication_state: BTreeMap<String, SnapshotReplicationState>,
@@ -2607,6 +2903,7 @@ impl ConsensusNode {
             replication_flow_config: ReplicationFlowConfig::default(),
             peer_replication_flow: BTreeMap::new(),
             compaction_config: LogCompactionConfig::default(),
+            compaction_coordination_config: CompactionCoordinationConfig::default(),
             compacted_snapshot: None,
             snapshot_bandwidth_config: SnapshotBandwidthConfig::default(),
             snapshot_replication_state: BTreeMap::new(),
@@ -3165,8 +3462,118 @@ impl ConsensusNode {
         Ok(())
     }
 
+    pub fn configure_compaction_coordination(
+        &mut self,
+        config: CompactionCoordinationConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.compaction_coordination_config = config;
+        Ok(())
+    }
+
+    pub fn compaction_coordination_config(&self) -> CompactionCoordinationConfig {
+        self.compaction_coordination_config
+    }
+
     pub fn compacted_log_frontier(&self) -> (u64, u64) {
         (self.log_base_index, self.log_base_term)
+    }
+
+    pub fn compaction_coordination_plan(
+        &self,
+        target_index: u64,
+    ) -> Result<CompactionCoordinationPlan, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.compaction_coordination_config.validate()?;
+        if target_index <= self.log_base_index
+            || target_index > self.last_applied
+            || target_index > self.commit_index
+        {
+            return Err(ConsensusError::CompactionCoordination(
+                "coordination target must be committed, applied, and beyond the retained frontier"
+                    .into(),
+            ));
+        }
+        let target_term = self
+            .entry_at(target_index)
+            .map(|entry| entry.term)
+            .ok_or_else(|| {
+                ConsensusError::CompactionCoordination(
+                    "coordination target is not present in the retained log".into(),
+                )
+            })?;
+        let configuration_hash = digest_json(&(
+            self.configuration_phase,
+            &self.members,
+            &self.previous_members,
+        ))?;
+        let remote_quorum = self.required_remote_compaction_quorum();
+        let required_safe_followers = if self.compaction_coordination_config.require_quorum {
+            remote_quorum.max(self.compaction_coordination_config.min_safe_followers)
+        } else {
+            self.compaction_coordination_config.min_safe_followers
+        };
+        let mut safe_followers = Vec::new();
+        let mut blocked_followers = Vec::new();
+        for follower_id in self.accepted_members() {
+            if follower_id == self.id {
+                continue;
+            }
+            let match_index = self
+                .replication_progress
+                .get(&follower_id)
+                .copied()
+                .unwrap_or_default()
+                .min(target_index);
+            let lag_entries = target_index.saturating_sub(match_index);
+            let safe_for_compaction =
+                lag_entries <= self.compaction_coordination_config.max_follower_lag_entries;
+            let status = CompactionFollowerStatus {
+                follower_id,
+                match_index,
+                target_index,
+                lag_entries,
+                safe_for_compaction,
+            };
+            if safe_for_compaction {
+                safe_followers.push(status);
+            } else {
+                blocked_followers.push(status);
+            }
+        }
+        let mut plan = CompactionCoordinationPlan {
+            leader_id: self.id.clone(),
+            target_index,
+            target_term,
+            commit_index: self.commit_index,
+            applied_index: self.last_applied,
+            configuration_phase: self.configuration_phase,
+            configuration_hash,
+            safe_followers,
+            blocked_followers,
+            required_safe_followers,
+            quorum_required: self.compaction_coordination_config.require_quorum,
+            ready: false,
+            plan_hash: String::new(),
+        };
+        plan.ready = plan.safe_followers.len() >= plan.required_safe_followers;
+        plan.plan_hash = plan.content_hash()?;
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    pub fn coordinate_compaction(
+        &mut self,
+        target_index: u64,
+    ) -> Result<CompactionCoordinationAction, ConsensusError> {
+        let plan = self.compaction_coordination_plan(target_index)?;
+        if !plan.ready {
+            return Ok(CompactionCoordinationAction::Waiting { plan });
+        }
+        let snapshot = self.compact_committed_log(target_index)?;
+        Ok(CompactionCoordinationAction::Compacted { plan, snapshot })
     }
 
     pub fn retained_log_len(&self) -> usize {
@@ -3330,6 +3737,78 @@ impl ConsensusNode {
                 ReplicationCatchUpAction::Incremental,
             )
         })
+    }
+
+    pub fn snapshot_request_for_append(
+        &self,
+        request: &AppendEntries,
+        retry_at_tick: Option<u64>,
+    ) -> Result<SnapshotRequestAction, ConsensusError> {
+        validate_node_id(&request.leader_id)?;
+        if !self.accepted_members().contains(&request.leader_id) {
+            return Err(ConsensusError::UnknownMember(request.leader_id.clone()));
+        }
+        if request.term < self.current_term || request.prev_log_index >= self.log_base_index {
+            return Ok(SnapshotRequestAction::None);
+        }
+        let snapshot_request = SnapshotRequest::new(
+            &self.id,
+            &request.leader_id,
+            request.term.max(self.current_term),
+            None,
+            SnapshotRequestReason::AppendPredecessorCompacted,
+            retry_at_tick,
+        )?;
+        snapshot_request.validate()?;
+        Ok(SnapshotRequestAction::Request(snapshot_request))
+    }
+
+    pub fn snapshot_request_for_incremental_delta(
+        &self,
+        leader_id: &str,
+        delta: &StateDelta,
+        retry_at_tick: Option<u64>,
+    ) -> Result<SnapshotRequestAction, ConsensusError> {
+        validate_node_id(leader_id)?;
+        if !self.accepted_members().contains(leader_id) {
+            return Err(ConsensusError::UnknownMember(leader_id.to_string()));
+        }
+        if delta.term < self.current_term || delta.base_index >= self.log_base_index {
+            return Ok(SnapshotRequestAction::None);
+        }
+        let snapshot_request = SnapshotRequest::new(
+            &self.id,
+            leader_id,
+            self.current_term.max(delta.term),
+            None,
+            SnapshotRequestReason::IncrementalBaseBehind,
+            retry_at_tick,
+        )?;
+        snapshot_request.validate()?;
+        Ok(SnapshotRequestAction::Request(snapshot_request))
+    }
+
+    pub fn handle_snapshot_request(
+        &mut self,
+        request: SnapshotRequest,
+        now_tick: u64,
+    ) -> Result<SnapshotTransferAction, ConsensusError> {
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        request.validate()?;
+        if request.leader_id != self.id {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request is bound to another leader".into(),
+            ));
+        }
+        self.validate_replication_peer(&request.follower_id)?;
+        if request.term != self.current_term {
+            return Err(ConsensusError::SnapshotRequest(
+                "snapshot request term is stale or ahead of the leader".into(),
+            ));
+        }
+        self.prepare_snapshot_transfer(&request.follower_id, now_tick)
     }
 
     pub fn set_snapshot_bandwidth_config(
@@ -4436,6 +4915,19 @@ impl ConsensusNode {
             members.extend(previous.iter().cloned());
         }
         members
+    }
+
+    fn required_remote_compaction_quorum(&self) -> usize {
+        let current =
+            quorum_size(&self.members).saturating_sub(usize::from(self.members.contains(&self.id)));
+        let previous = self
+            .previous_members
+            .as_ref()
+            .map(|members| {
+                quorum_size(members).saturating_sub(usize::from(members.contains(&self.id)))
+            })
+            .unwrap_or_default();
+        current.max(previous)
     }
 
     fn has_vote_quorum(&self, voters: &BTreeSet<String>) -> bool {
