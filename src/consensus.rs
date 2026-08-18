@@ -2161,6 +2161,12 @@ pub enum SocketDeliveryCrashPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DurableSocketDeliveryAction {
     Idle,
+    OwnershipFenced {
+        peer_id: String,
+        owner_id: String,
+        ownership_epoch: u64,
+        retry_at_tick: u64,
+    },
     WaitingForQuorum {
         sequence: u64,
         acknowledgements: usize,
@@ -2580,6 +2586,101 @@ impl QueueOwnershipTransfer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QueueOwnershipFence {
+    pub peer_id: String,
+    pub owner_id: String,
+    pub owner_term: u64,
+    pub ownership_epoch: u64,
+    pub observed_tick: u64,
+    pub reachable_members: usize,
+    pub required_members: usize,
+    pub reason: String,
+    pub fence_hash: String,
+}
+
+impl QueueOwnershipFence {
+    pub fn new(
+        peer_id: &str,
+        owner_id: &str,
+        owner_term: u64,
+        ownership_epoch: u64,
+        observed_tick: u64,
+        reachable_members: usize,
+        required_members: usize,
+        reason: &str,
+    ) -> Result<Self, ConsensusError> {
+        let mut fence = Self {
+            peer_id: peer_id.to_string(),
+            owner_id: owner_id.to_string(),
+            owner_term,
+            ownership_epoch,
+            observed_tick,
+            reachable_members,
+            required_members,
+            reason: reason.to_string(),
+            fence_hash: String::new(),
+        };
+        fence.validate_identity()?;
+        fence.fence_hash = fence.content_hash()?;
+        Ok(fence)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.peer_id)?;
+        validate_node_id(&self.owner_id)?;
+        if self.owner_term == 0 || self.ownership_epoch == 0 {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership fence term and epoch must be positive".into(),
+            ));
+        }
+        if self.reachable_members > MAX_MEMBERS
+            || self.required_members == 0
+            || self.required_members > MAX_MEMBERS
+            || self.reachable_members >= self.required_members
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership fence must represent a bounded quorum loss".into(),
+            ));
+        }
+        if self.reason.is_empty()
+            || self.reason.len() > MAX_VALUE_BYTES
+            || self.reason.chars().any(char::is_control)
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership fence reason is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.peer_id,
+            &self.owner_id,
+            self.owner_term,
+            self.ownership_epoch,
+            self.observed_tick,
+            self.reachable_members,
+            self.required_members,
+            &self.reason,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.fence_hash).map_err(|_| {
+            ConsensusError::DurableQueueOwnership("ownership fence hash is invalid".into())
+        })?;
+        if self.content_hash()? != self.fence_hash {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership fence hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DurableSocketQueueState {
     pub cluster_id: String,
     pub node_id: String,
@@ -2593,6 +2694,8 @@ pub struct DurableSocketQueueState {
     #[serde(default)]
     pub replicated_acknowledgements:
         BTreeMap<String, BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>>,
+    #[serde(default)]
+    pub ownership_fences: BTreeMap<String, QueueOwnershipFence>,
     #[serde(default = "default_ack_quorum_size")]
     pub ack_quorum_size: usize,
     pub state_hash: String,
@@ -2652,6 +2755,37 @@ impl DurableSocketQueueState {
         >,
         ack_quorum_size: usize,
     ) -> Result<Self, ConsensusError> {
+        Self::new_with_replication_and_fences(
+            cluster_id,
+            node_id,
+            replay_epoch,
+            quota_config,
+            peer_quotas,
+            next_queue_sequences,
+            queued_frames,
+            ownership,
+            replicated_acknowledgements,
+            BTreeMap::new(),
+            ack_quorum_size,
+        )
+    }
+
+    pub fn new_with_replication_and_fences(
+        cluster_id: &str,
+        node_id: &str,
+        replay_epoch: u64,
+        quota_config: SocketQuotaConfig,
+        peer_quotas: BTreeMap<String, SocketPeerQuota>,
+        next_queue_sequences: BTreeMap<String, u64>,
+        queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+        ownership: BTreeMap<String, DurableQueueOwnership>,
+        replicated_acknowledgements: BTreeMap<
+            String,
+            BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>,
+        >,
+        ownership_fences: BTreeMap<String, QueueOwnershipFence>,
+        ack_quorum_size: usize,
+    ) -> Result<Self, ConsensusError> {
         let mut state = Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2662,6 +2796,7 @@ impl DurableSocketQueueState {
             queued_frames,
             ownership,
             replicated_acknowledgements,
+            ownership_fences,
             ack_quorum_size,
             state_hash: String::new(),
         };
@@ -2701,6 +2836,23 @@ impl DurableSocketQueueState {
             return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
                 "ack quorum must be within the accepted peer set".into(),
             ));
+        }
+        for (peer_id, fence) in &self.ownership_fences {
+            let ownership = self.ownership.get(peer_id).ok_or_else(|| {
+                ConsensusError::DurableQueueOwnership(
+                    "ownership fence references an unknown queue peer".into(),
+                )
+            })?;
+            fence.validate()?;
+            if fence.peer_id != *peer_id
+                || fence.owner_id != ownership.owner_id
+                || fence.owner_term != ownership.owner_term
+                || fence.ownership_epoch != ownership.ownership_epoch
+            {
+                return Err(ConsensusError::DurableQueueOwnership(
+                    "ownership fence is not bound to the active lease".into(),
+                ));
+            }
         }
         let acknowledgement_bytes = serde_json::to_vec(&self.replicated_acknowledgements)
             .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
@@ -2834,6 +2986,22 @@ impl DurableSocketQueueState {
             &self.queued_frames,
             &self.ownership,
             &self.replicated_acknowledgements,
+            &self.ownership_fences,
+            self.ack_quorum_size,
+        ))
+    }
+
+    fn legacy_content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.cluster_id,
+            &self.node_id,
+            self.replay_epoch,
+            &self.quota_config,
+            &self.peer_quotas,
+            &self.next_queue_sequences,
+            &self.queued_frames,
+            &self.ownership,
+            &self.replicated_acknowledgements,
             self.ack_quorum_size,
         ))
     }
@@ -2843,7 +3011,8 @@ impl DurableSocketQueueState {
         validate_hex_digest(&self.state_hash).map_err(|_| {
             ConsensusError::SocketQuota("durable queue state hash is invalid".into())
         })?;
-        if self.content_hash()? != self.state_hash {
+        if self.content_hash()? != self.state_hash && self.legacy_content_hash()? != self.state_hash
+        {
             return Err(ConsensusError::SocketQuota(
                 "durable queue state hash mismatch".into(),
             ));
@@ -2949,6 +3118,7 @@ pub struct AuthenticatedSocketTransport {
     ownership: BTreeMap<String, DurableQueueOwnership>,
     replicated_acknowledgements:
         BTreeMap<String, BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>>,
+    ownership_fences: BTreeMap<String, QueueOwnershipFence>,
     ack_quorum_size: usize,
     local_delivery_signing_key: Option<SigningKey>,
     active_deliveries: BTreeMap<String, Option<u64>>,
@@ -3074,6 +3244,7 @@ impl AuthenticatedSocketTransport {
             durable_queues,
             ownership,
             replicated_acknowledgements,
+            ownership_fences: BTreeMap::new(),
             ack_quorum_size: default_ack_quorum_size(),
             local_delivery_signing_key: None,
             active_deliveries,
@@ -3162,6 +3333,7 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), BTreeMap::new()))
             .collect();
+        self.ownership_fences.clear();
         self.ack_quorum_size = default_ack_quorum_size();
         self.active_deliveries = self
             .trusted_keys
@@ -3199,6 +3371,115 @@ impl AuthenticatedSocketTransport {
             .get(peer_id)
             .cloned()
             .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))
+    }
+
+    pub fn ownership_fence(
+        &self,
+        peer_id: &str,
+    ) -> Result<Option<QueueOwnershipFence>, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.trusted_keys.contains_key(peer_id) {
+            return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        Ok(self.ownership_fences.get(peer_id).cloned())
+    }
+
+    pub fn record_ownership_quorum_loss(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        peer_id: &str,
+        observed_tick: u64,
+        reachable_members: usize,
+        reason: &str,
+    ) -> Result<DurableSocketDeliveryAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        let ownership = self.queue_ownership(peer_id)?;
+        if ownership.owner_id != self.node_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "only the current owner may record a local quorum-loss fence".into(),
+            ));
+        }
+        let required_members = self.ack_quorum_size;
+        let fence = QueueOwnershipFence::new(
+            peer_id,
+            &ownership.owner_id,
+            ownership.owner_term,
+            ownership.ownership_epoch,
+            observed_tick,
+            reachable_members,
+            required_members,
+            reason,
+        )?;
+        if let Some(existing) = self.ownership_fences.get(peer_id) {
+            if existing.observed_tick > observed_tick {
+                return Ok(DurableSocketDeliveryAction::OwnershipFenced {
+                    peer_id: peer_id.to_string(),
+                    owner_id: existing.owner_id.clone(),
+                    ownership_epoch: existing.ownership_epoch,
+                    retry_at_tick: existing.observed_tick,
+                });
+            }
+            if existing.fence_hash == fence.fence_hash {
+                return Ok(DurableSocketDeliveryAction::OwnershipFenced {
+                    peer_id: peer_id.to_string(),
+                    owner_id: existing.owner_id.clone(),
+                    ownership_epoch: existing.ownership_epoch,
+                    retry_at_tick: existing.observed_tick,
+                });
+            }
+        }
+        let previous = self
+            .ownership_fences
+            .insert(peer_id.to_string(), fence.clone());
+        if let Err(error) = self.persist_durable_queue(store) {
+            match previous {
+                Some(previous) => {
+                    self.ownership_fences.insert(peer_id.to_string(), previous);
+                }
+                None => {
+                    self.ownership_fences.remove(peer_id);
+                }
+            }
+            return Err(error);
+        }
+        Ok(DurableSocketDeliveryAction::OwnershipFenced {
+            peer_id: peer_id.to_string(),
+            owner_id: fence.owner_id,
+            ownership_epoch: fence.ownership_epoch,
+            retry_at_tick: observed_tick,
+        })
+    }
+
+    fn delivery_ownership_fence(
+        &self,
+        peer_id: &str,
+        now_tick: u64,
+    ) -> Result<Option<DurableSocketDeliveryAction>, ConsensusError> {
+        let ownership = self.queue_ownership(peer_id)?;
+        let retry_at_tick = now_tick
+            .checked_add(self.quota_config.retry_backoff_ticks)
+            .ok_or_else(|| {
+                ConsensusError::DurableQueueOwnership("ownership retry tick overflow".into())
+            })?;
+        if let Some(fence) = self.ownership_fences.get(peer_id) {
+            return Ok(Some(DurableSocketDeliveryAction::OwnershipFenced {
+                peer_id: peer_id.to_string(),
+                owner_id: fence.owner_id.clone(),
+                ownership_epoch: fence.ownership_epoch,
+                retry_at_tick: fence.observed_tick.max(retry_at_tick),
+            }));
+        }
+        if ownership.owner_id != self.node_id
+            || (ownership.lease_expiry_tick != u64::MAX && now_tick >= ownership.lease_expiry_tick)
+        {
+            return Ok(Some(DurableSocketDeliveryAction::OwnershipFenced {
+                peer_id: peer_id.to_string(),
+                owner_id: ownership.owner_id,
+                ownership_epoch: ownership.ownership_epoch,
+                retry_at_tick,
+            }));
+        }
+        Ok(None)
     }
 
     pub fn replicated_acknowledgement_count(
@@ -3395,7 +3676,7 @@ impl AuthenticatedSocketTransport {
     }
 
     pub fn durable_queue_state(&self) -> Result<DurableSocketQueueState, ConsensusError> {
-        DurableSocketQueueState::new_with_replication(
+        DurableSocketQueueState::new_with_replication_and_fences(
             &self.cluster_id,
             &self.node_id,
             self.replay_epoch,
@@ -3405,6 +3686,7 @@ impl AuthenticatedSocketTransport {
             self.durable_queues.clone(),
             self.ownership.clone(),
             self.replicated_acknowledgements.clone(),
+            self.ownership_fences.clone(),
             self.ack_quorum_size,
         )
     }
@@ -3454,6 +3736,7 @@ impl AuthenticatedSocketTransport {
         self.durable_queues = state.queued_frames;
         self.ownership = state.ownership;
         self.replicated_acknowledgements = state.replicated_acknowledgements;
+        self.ownership_fences = state.ownership_fences;
         self.ack_quorum_size = state.ack_quorum_size;
         self.active_deliveries = self
             .trusted_keys
@@ -3596,6 +3879,14 @@ impl AuthenticatedSocketTransport {
                 "only the current queue owner may commit replicated acknowledgements".into(),
             ));
         }
+        if self.ownership_fences.contains_key(&peer_id)
+            || (ownership.lease_expiry_tick != u64::MAX
+                && acknowledgement.acknowledgement_tick >= ownership.lease_expiry_tick)
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "replicated acknowledgement is blocked by ownership fencing".into(),
+            ));
+        }
         if acknowledgement.owner_id != ownership.owner_id
             || acknowledgement.ownership_epoch != ownership.ownership_epoch
         {
@@ -3719,6 +4010,7 @@ impl AuthenticatedSocketTransport {
             transfer.ownership_epoch,
         )?;
         let previous = current;
+        let previous_fence = self.ownership_fences.remove(&peer_id);
         let previous_acknowledgements = self
             .replicated_acknowledgements
             .get_mut(&peer_id)
@@ -3737,6 +4029,10 @@ impl AuthenticatedSocketTransport {
             self.ownership.insert(peer_id.clone(), previous);
             self.replicated_acknowledgements
                 .insert(peer_id.clone(), previous_acknowledgements);
+            if let Some(previous_fence) = previous_fence {
+                self.ownership_fences
+                    .insert(peer_id.clone(), previous_fence);
+            }
             return Err(error);
         }
         Ok(ReplicatedDeliveryAction::OwnershipTransferred {
@@ -3756,6 +4052,9 @@ impl AuthenticatedSocketTransport {
         validate_node_id(peer_id)?;
         if !self.trusted_keys.contains_key(peer_id) {
             return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        if let Some(action) = self.delivery_ownership_fence(peer_id, now_tick)? {
+            return Ok(action);
         }
         let frame = match self.durable_queue_frame(peer_id)? {
             Some(frame) => frame,
@@ -4054,9 +4353,10 @@ impl AuthenticatedSocketTransport {
                 "queue sequence must be positive".into(),
             ));
         }
-        if self.queue_ownership(peer_id)?.owner_id != self.node_id {
+        let ownership = self.queue_ownership(peer_id)?;
+        if ownership.owner_id != self.node_id || self.ownership_fences.contains_key(peer_id) {
             return Err(ConsensusError::DurableQueueOwnership(
-                "local acknowledgement requires current queue ownership".into(),
+                "local acknowledgement requires current, unfenced queue ownership".into(),
             ));
         }
         let frames = self

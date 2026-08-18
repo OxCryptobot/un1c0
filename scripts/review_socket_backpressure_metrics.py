@@ -33,6 +33,12 @@ PHASE26_KEYS = [
     "tampered_payload_fails_closed",
     "durable_delivery_metrics_non_secret",
 ]
+PHASE28_KEYS = [
+    "quorum_loss_fences_delivery",
+    "lease_expiry_fences_delivery",
+    "fence_survives_restart",
+    "ownership_transfer_clears_fence",
+]
 
 
 def main() -> int:
@@ -47,6 +53,7 @@ def main() -> int:
     phase24 = artifact["phase24_socket_backpressure_quotas"]
     phase25 = artifact["phase25_durable_transport_queues"]
     phase26 = artifact["phase26_authenticated_durable_delivery"]
+    phase28 = artifact["phase28_partition_ownership_fencing"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -59,6 +66,11 @@ def main() -> int:
     for key in PHASE26_KEYS:
         if phase26.get(key) is not True:
             failures.append(f"phase26 evidence is not true: {key}")
+    for key in PHASE28_KEYS:
+        if phase28.get(key) is not True:
+            failures.append(f"phase28 evidence is not true: {key}")
+    if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
+        failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
         failures.append("phase26 crash-point coverage is not exactly four")
     if phase24.get("socket_threads_and_scheduler") != "deployment_boundary":
@@ -77,6 +89,7 @@ def main() -> int:
         "phase25_evidence_checked": PHASE25_KEYS,
         "phase26_evidence_checked": PHASE26_KEYS,
         "phase26_crash_points_retaining_queue": phase26.get("crash_points_retaining_queue"),
+        "phase28_evidence_checked": PHASE28_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",

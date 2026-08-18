@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "cluster_mutation_performed": false,
   "failures": [],
-  "gate_count": 60,
+  "gate_count": 64,
   "phase24_evidence_checked": [
     "per_peer_send_isolation",
     "exact_frame_byte_admission",
@@ -28,6 +28,12 @@
     "restart_retry_after_crash",
     "tampered_payload_fails_closed",
     "durable_delivery_metrics_non_secret"
+  ],
+  "phase28_evidence_checked": [
+    "quorum_loss_fences_delivery",
+    "lease_expiry_fences_delivery",
+    "fence_survives_restart",
+    "ownership_transfer_clears_fence"
   ],
   "result": "passed",
   "runtime_metric_contract": [
