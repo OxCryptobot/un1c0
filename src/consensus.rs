@@ -2070,6 +2070,9 @@ pub struct SocketPeerQuota {
     pub rejected_frames: u64,
     pub backpressured_sends: u64,
     pub backpressured_receives: u64,
+    pub durable_delivery_attempts: u64,
+    pub durable_delivery_failures: u64,
+    pub injected_delivery_crashes: u64,
 }
 
 impl SocketPeerQuota {
@@ -2083,6 +2086,9 @@ impl SocketPeerQuota {
             rejected_frames: 0,
             backpressured_sends: 0,
             backpressured_receives: 0,
+            durable_delivery_attempts: 0,
+            durable_delivery_failures: 0,
+            injected_delivery_crashes: 0,
         }
     }
 }
@@ -2124,9 +2130,41 @@ pub struct SocketTransportMetrics {
     pub rejected_frames: u64,
     pub backpressured_sends: u64,
     pub backpressured_receives: u64,
+    #[serde(default)]
+    pub durable_delivery_attempts: u64,
+    #[serde(default)]
+    pub durable_delivery_failures: u64,
+    #[serde(default)]
+    pub injected_delivery_crashes: u64,
     pub durable_queue_frames: u64,
     pub durable_queue_bytes: u64,
     pub next_queue_sequence: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SocketDeliveryCrashPoint {
+    None,
+    BeforeLengthPrefix,
+    AfterLengthPrefix,
+    AfterPayloadWrite,
+    AfterFlush,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DurableSocketDeliveryAction {
+    Idle,
+    Delivered {
+        sequence: u64,
+        frame_bytes: u64,
+    },
+    CrashInjected {
+        sequence: u64,
+        point: SocketDeliveryCrashPoint,
+    },
+    Backpressured {
+        retry_at_tick: u64,
+        available_bytes: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2426,6 +2464,7 @@ pub struct AuthenticatedSocketTransport {
     peer_quotas: BTreeMap<String, SocketPeerQuota>,
     next_queue_sequences: BTreeMap<String, u64>,
     durable_queues: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+    active_deliveries: BTreeMap<String, Option<u64>>,
     max_frame_bytes: usize,
 }
 
@@ -2513,6 +2552,10 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), Vec::new()))
             .collect();
+        let active_deliveries = trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), None))
+            .collect();
         Ok(Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2525,6 +2568,7 @@ impl AuthenticatedSocketTransport {
             peer_quotas,
             next_queue_sequences,
             durable_queues,
+            active_deliveries,
             max_frame_bytes: MAX_FRAME_BYTES,
         })
     }
@@ -2591,6 +2635,11 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), Vec::new()))
             .collect();
+        self.active_deliveries = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), None))
+            .collect();
         Ok(())
     }
 
@@ -2644,6 +2693,9 @@ impl AuthenticatedSocketTransport {
             rejected_frames: quota.rejected_frames,
             backpressured_sends: quota.backpressured_sends,
             backpressured_receives: quota.backpressured_receives,
+            durable_delivery_attempts: quota.durable_delivery_attempts,
+            durable_delivery_failures: quota.durable_delivery_failures,
+            injected_delivery_crashes: quota.injected_delivery_crashes,
             durable_queue_frames: queued_frames.len() as u64,
             durable_queue_bytes,
             next_queue_sequence: *self
@@ -2818,6 +2870,11 @@ impl AuthenticatedSocketTransport {
         self.peer_quotas = state.peer_quotas;
         self.next_queue_sequences = state.next_queue_sequences;
         self.durable_queues = state.queued_frames;
+        self.active_deliveries = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), None))
+            .collect();
         Ok(())
     }
 
@@ -2852,6 +2909,148 @@ impl AuthenticatedSocketTransport {
             .get(peer_id)
             .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
         Ok(frames.first().cloned())
+    }
+
+    pub fn deliver_next_durable_frame(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        stream: &mut TcpStream,
+        peer_id: &str,
+        now_tick: u64,
+        crash_point: SocketDeliveryCrashPoint,
+    ) -> Result<DurableSocketDeliveryAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.trusted_keys.contains_key(peer_id) {
+            return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        let frame = match self.durable_queue_frame(peer_id)? {
+            Some(frame) => frame,
+            None => return Ok(DurableSocketDeliveryAction::Idle),
+        };
+        if self
+            .active_deliveries
+            .get(peer_id)
+            .copied()
+            .flatten()
+            .is_some()
+        {
+            let retry_at_tick = now_tick
+                .checked_add(self.quota_config.retry_backoff_ticks)
+                .ok_or_else(|| {
+                    ConsensusError::SocketQuota("delivery retry tick overflow".into())
+                })?;
+            return Ok(DurableSocketDeliveryAction::Backpressured {
+                retry_at_tick,
+                available_bytes: 0,
+            });
+        }
+        let trusted_key = self
+            .trusted_keys
+            .get(&self.node_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(self.node_id.clone()))?;
+        let envelope: AuthenticatedConsensusEnvelope =
+            serde_json::from_slice(&frame.frame_bytes)
+                .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &self.node_id,
+            &trusted_key,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        self.active_deliveries
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+            .replace(frame.sequence);
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        quota.durable_delivery_attempts = quota.durable_delivery_attempts.saturating_add(1);
+        if let Err(error) = self.persist_durable_queue(store) {
+            self.active_deliveries
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+                .take();
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.durable_delivery_attempts = quota.durable_delivery_attempts.saturating_sub(1);
+            return Err(error);
+        }
+
+        let mut finish_with_crash = |point: SocketDeliveryCrashPoint| {
+            self.active_deliveries
+                .get_mut(peer_id)
+                .and_then(Option::take);
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.durable_delivery_failures = quota.durable_delivery_failures.saturating_add(1);
+                quota.injected_delivery_crashes = quota.injected_delivery_crashes.saturating_add(1);
+            }
+            let _ = self.persist_durable_queue(store);
+            DurableSocketDeliveryAction::CrashInjected {
+                sequence: frame.sequence,
+                point,
+            }
+        };
+
+        if crash_point == SocketDeliveryCrashPoint::BeforeLengthPrefix {
+            return Ok(finish_with_crash(crash_point));
+        }
+        let length = (frame.frame_bytes.len() as u32).to_be_bytes();
+        if let Err(error) = stream.write_all(&length) {
+            self.active_deliveries
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+                .take();
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.durable_delivery_failures = quota.durable_delivery_failures.saturating_add(1);
+            }
+            let _ = self.persist_durable_queue(store);
+            return Err(ConsensusError::Transport(error.to_string()));
+        }
+        if crash_point == SocketDeliveryCrashPoint::AfterLengthPrefix {
+            return Ok(finish_with_crash(crash_point));
+        }
+        if let Err(error) = stream.write_all(&frame.frame_bytes) {
+            self.active_deliveries
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+                .take();
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.durable_delivery_failures = quota.durable_delivery_failures.saturating_add(1);
+            }
+            let _ = self.persist_durable_queue(store);
+            return Err(ConsensusError::Transport(error.to_string()));
+        }
+        if crash_point == SocketDeliveryCrashPoint::AfterPayloadWrite {
+            return Ok(finish_with_crash(crash_point));
+        }
+        if let Err(error) = stream.flush() {
+            self.active_deliveries
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+                .take();
+            if let Some(quota) = self.peer_quotas.get_mut(peer_id) {
+                quota.durable_delivery_failures = quota.durable_delivery_failures.saturating_add(1);
+            }
+            let _ = self.persist_durable_queue(store);
+            return Err(ConsensusError::Transport(error.to_string()));
+        }
+        if crash_point == SocketDeliveryCrashPoint::AfterFlush {
+            return Ok(finish_with_crash(crash_point));
+        }
+        self.active_deliveries
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+            .take();
+        self.acknowledge_durable_frame(store, peer_id, frame.sequence)?;
+        Ok(DurableSocketDeliveryAction::Delivered {
+            sequence: frame.sequence,
+            frame_bytes: frame.frame_bytes.len() as u64,
+        })
     }
 
     pub fn enqueue_durable_frame_with_backpressure(

@@ -25,6 +25,14 @@ PHASE25_KEYS = [
     "epoch_mismatch_rejected",
     "persistence_failure_rolls_back",
 ]
+PHASE26_KEYS = [
+    "authenticated_payload_reverified_before_send",
+    "one_active_delivery_per_peer",
+    "ack_only_after_flush",
+    "restart_retry_after_crash",
+    "tampered_payload_fails_closed",
+    "durable_delivery_metrics_non_secret",
+]
 
 
 def main() -> int:
@@ -38,6 +46,7 @@ def main() -> int:
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     phase24 = artifact["phase24_socket_backpressure_quotas"]
     phase25 = artifact["phase25_durable_transport_queues"]
+    phase26 = artifact["phase26_authenticated_durable_delivery"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -47,6 +56,11 @@ def main() -> int:
     for key in PHASE25_KEYS:
         if phase25.get(key) is not True:
             failures.append(f"phase25 evidence is not true: {key}")
+    for key in PHASE26_KEYS:
+        if phase26.get(key) is not True:
+            failures.append(f"phase26 evidence is not true: {key}")
+    if phase26.get("crash_points_retaining_queue") != 4:
+        failures.append("phase26 crash-point coverage is not exactly four")
     if phase24.get("socket_threads_and_scheduler") != "deployment_boundary":
         failures.append("socket thread and scheduler ownership is not deployment-bound")
     if phase25.get("socket_queue_threads_and_replication") != "deployment_boundary":
@@ -61,6 +75,8 @@ def main() -> int:
         "gate_count": len(artifact["gates"]),
         "phase24_evidence_checked": PHASE24_KEYS,
         "phase25_evidence_checked": PHASE25_KEYS,
+        "phase26_evidence_checked": PHASE26_KEYS,
+        "phase26_crash_points_retaining_queue": phase26.get("crash_points_retaining_queue"),
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",
@@ -71,6 +87,9 @@ def main() -> int:
             "durable_queue_frames",
             "durable_queue_bytes",
             "next_queue_sequence",
+            "durable_delivery_attempts",
+            "durable_delivery_failures",
+            "injected_delivery_crashes",
         ],
         "runtime_payloads_persisted_in_artifact": False,
         "runtime_payload_boundary": "deployment_boundary",

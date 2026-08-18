@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 52
+EXPECTED_GATE_COUNT = 56
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -113,6 +113,16 @@ REQUIRED_PHASES = {
         "epoch_mismatch_rejected",
         "persistence_failure_rolls_back",
         "socket_queue_threads_and_replication",
+    ],
+    "phase26_authenticated_durable_delivery": [
+        "authenticated_payload_reverified_before_send",
+        "one_active_delivery_per_peer",
+        "ack_only_after_flush",
+        "crash_points_retaining_queue",
+        "restart_retry_after_crash",
+        "tampered_payload_fails_closed",
+        "durable_delivery_metrics_non_secret",
+        "socket_thread_and_process_ownership",
     ],
 }
 
