@@ -8,7 +8,7 @@
 
 ## Executive summary
 
-Phase 14 validates two linearizable client-read paths. The lease fast path serves a query after a previously completed current-term quorum read-index round, while the quorum path performs a fresh bounded read-index acknowledgement before executing the plan. The latest repeatable gate completed **16,128 reads with zero errors** in each path comparison. At concurrency 32, the lease path measured **1,884 µs p95** and **77,360.38 operations per second**, while the quorum path measured **1,752 µs p95** and **71,580.85 operations per second**.
+Phase 14 validates two linearizable client-read paths. The lease fast path serves a query after a previously completed current-term quorum read-index round, while the quorum path performs a fresh bounded read-index acknowledgement before executing the plan. The latest repeatable gate completed **16,128 reads with zero errors** in each path comparison. At concurrency 32, the lease path measured **1,746 µs p95** and **79,486.70 operations per second**, while the quorum path measured **1,712 µs p95** and **75,523.14 operations per second**.
 
 The benchmark confirms correctness, bounded concurrency behavior, and zero-error operation. It does **not** establish a universal latency or throughput advantage for the lease path in this small in-process fixture: scheduler and mutex effects dominate some tail samples. The protocol-level optimization is real because the lease path avoids a fresh read-index round, but production performance must be measured with authenticated transport, independent client workers, realistic network delay, and a server architecture that does not serialize all reads behind one benchmark mutex.
 
@@ -16,24 +16,24 @@ The benchmark confirms correctness, bounded concurrency behavior, and zero-error
 
 | Concurrency | Path | Operations | Errors | p50 (µs) | p95 (µs) | p99 (µs) | Throughput (ops/s) |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Lease fast path | 128 | 0 | 2 | 3 | 7 | 181,213.79 |
-| 1 | Quorum read-index | 128 | 0 | 5 | 9 | 15 | 121,312.87 |
-| 2 | Lease fast path | 256 | 0 | 5 | 20 | 196 | 112,471.16 |
-| 2 | Quorum read-index | 256 | 0 | 14 | 97 | 248 | 69,052.26 |
-| 4 | Lease fast path | 512 | 0 | 13 | 27 | 979 | 74,912.65 |
-| 4 | Quorum read-index | 512 | 0 | 13 | 34 | 426 | 75,276.54 |
-| 8 | Lease fast path | 1,024 | 0 | 13 | 166 | 2,033 | 71,759.40 |
-| 8 | Quorum read-index | 1,024 | 0 | 14 | 211 | 2,103 | 68,638.34 |
-| 16 | Lease fast path | 2,048 | 0 | 14 | 758 | 3,170 | 70,699.90 |
-| 16 | Quorum read-index | 2,048 | 0 | 14 | 351 | 4,482 | 73,282.82 |
-| 32 | Lease fast path | 4,096 | 0 | 14 | 1,884 | 6,322 | 77,360.38 |
-| 32 | Quorum read-index | 4,096 | 0 | 14 | 1,752 | 6,334 | 71,580.85 |
+| 1 | Lease fast path | 128 | 0 | 2 | 3 | 4 | 160,879.41 |
+| 1 | Quorum read-index | 128 | 0 | 5 | 6 | 7 | 147,126.78 |
+| 2 | Lease fast path | 256 | 0 | 13 | 14 | 34 | 66,256.39 |
+| 2 | Quorum read-index | 256 | 0 | 6 | 34 | 92 | 98,548.87 |
+| 4 | Lease fast path | 512 | 0 | 14 | 132 | 419 | 83,098.51 |
+| 4 | Quorum read-index | 512 | 0 | 8 | 63 | 657 | 86,558.25 |
+| 8 | Lease fast path | 1,024 | 0 | 14 | 321 | 1,521 | 73,418.61 |
+| 8 | Quorum read-index | 1,024 | 0 | 14 | 430 | 1,618 | 71,099.95 |
+| 16 | Lease fast path | 2,048 | 0 | 14 | 699 | 2,741 | 74,110.17 |
+| 16 | Quorum read-index | 2,048 | 0 | 14 | 821 | 2,411 | 76,241.67 |
+| 32 | Lease fast path | 4,096 | 0 | 13 | 1,746 | 4,917 | 79,486.70 |
+| 32 | Quorum read-index | 4,096 | 0 | 14 | 1,712 | 5,796 | 75,523.14 |
 
 ## Interpretation
 
-The lease path has lower p50 latency at concurrency 1 and 2 and remains competitive in throughput at higher concurrency, but the p95 comparison is not monotonic. This is expected for a benchmark that serializes access through `Arc<Mutex<ConsensusNode>>`; the result measures the interaction between the protocol path, lock contention, scheduler timing, and allocation rather than a production network service. The correct conclusion is that the implementation is **functionally and operationally ready for the next benchmark layer**, not that this fixture proves a specific production speedup.
+At concurrency 1, the lease path has a modest throughput advantage and lower p95. At concurrency 2, the quorum path is faster in this run, demonstrating why the benchmark must be treated as regression evidence rather than a universal speedup claim. At concurrency 4 the paths are near parity; at concurrency 8 the lease path has lower p95 and slightly higher throughput; at concurrency 16 the paths are near parity; and at concurrency 32 the lease path has approximately **1.05×** throughput with near-parity p95.
 
-A follow-up benchmark should separate protocol execution from client serialization, use a read-only snapshot view for the execution portion, add a real authenticated transport round for the quorum path, record CPU and allocation counters, and run repeated samples with confidence intervals. No WAN or cross-machine capacity claim is made here.
+The lease path avoids creating and completing a fresh read-index round, so its protocol work is lower by construction. The benchmark serializes calls through `Arc<Mutex<ConsensusNode>>`, which can dominate tail latency and obscure the protocol-level advantage. The next performance layer should separate immutable read execution from mutable consensus bookkeeping, use independent client workers, measure authenticated transport, record CPU and allocation counters, and repeat each point for confidence intervals. No WAN or cross-machine capacity claim is made here.
 
 ## Safety evidence
 
@@ -47,17 +47,23 @@ The consensus core uses an injected monotonic tick and never spawns timers or re
 
 ## Compliance integration
 
-The full security/compliance validator includes two Phase 14 gates: `leader_lease_read_optimization` and `linearizable_read_consistency`. The committed metrics artifact contains **20 passed gates**, the 12 raw lease/quorum benchmark rows, zero benchmark errors, the commit identifier, and the non-secret production-boundary notes.
+The full security/compliance validator now includes the Phase 15 timer batch and reports **22 passed gates**, including `leader_lease_read_optimization`, `linearizable_read_consistency`, `election_timer_safety`, and `failure_detector_boundaries`. The committed metrics artifact contains the 12 raw Phase 14 lease/quorum rows, zero benchmark errors, the Phase 15 timer action record, the commit identifier, and the non-secret production-boundary notes.
 
 ## Reproduction
 
-Run the dedicated gate from the repository root:
+Run the dedicated Phase 14 gate:
 
 ```bash
 scripts/validate_phase14_read_optimization.sh
 ```
 
-The gate runs `phase14_linearizable_reads_integration`, regenerates the raw JSON, and verifies all 12 expected rows, all requested concurrency levels, 128 operations per worker, zero errors, monotonic percentile ordering, and positive throughput. The complete project gate is:
+Run the detailed analysis generator:
+
+```bash
+python3 scripts/analyze_phase14_benchmark.py
+```
+
+Run the complete project gate, including Phase 15:
 
 ```bash
 scripts/validate_security_compliance.sh

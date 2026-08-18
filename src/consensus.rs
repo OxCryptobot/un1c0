@@ -28,6 +28,7 @@ const MAX_SYNC_CHUNKS: usize = 256;
 const MAX_READ_ROUNDS: usize = 1_024;
 const MAX_COMPLETED_READ_REQUESTS: usize = 4_096;
 const MAX_LEASE_TICKS: u64 = 86_400_000;
+const MAX_ELECTION_TICKS: u64 = 86_400_000;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -90,6 +91,10 @@ pub enum ConsensusError {
     LeaseExpired,
     #[error("monotonic clock safety is uncertain")]
     ClockUntrusted,
+    #[error("invalid election timer configuration: {0}")]
+    InvalidElectionTimer(String),
+    #[error("peer is not an accepted consensus member: {0}")]
+    InvalidPeer(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +405,93 @@ pub struct LinearizableReadPlan {
 pub enum ReadIndexAction {
     Lease(LinearizableReadPlan),
     Quorum(ReadIndexRequest),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ElectionTimerConfig {
+    pub election_timeout_ticks: u64,
+    pub election_jitter_ticks: u64,
+    pub heartbeat_interval_ticks: u64,
+    pub failure_detector_ticks: u64,
+}
+
+impl Default for ElectionTimerConfig {
+    fn default() -> Self {
+        Self {
+            election_timeout_ticks: 150,
+            election_jitter_ticks: 50,
+            heartbeat_interval_ticks: 50,
+            failure_detector_ticks: 300,
+        }
+    }
+}
+
+impl ElectionTimerConfig {
+    pub fn new(
+        election_timeout_ticks: u64,
+        election_jitter_ticks: u64,
+        heartbeat_interval_ticks: u64,
+        failure_detector_ticks: u64,
+    ) -> Result<Self, ConsensusError> {
+        let config = Self {
+            election_timeout_ticks,
+            election_jitter_ticks,
+            heartbeat_interval_ticks,
+            failure_detector_ticks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.election_timeout_ticks == 0
+            || self.election_timeout_ticks > MAX_ELECTION_TICKS
+            || self.heartbeat_interval_ticks == 0
+            || self.failure_detector_ticks == 0
+        {
+            return Err(ConsensusError::InvalidElectionTimer(
+                "timer values must be positive and bounded".into(),
+            ));
+        }
+        if self.election_jitter_ticks > MAX_ELECTION_TICKS
+            || self
+                .election_timeout_ticks
+                .checked_add(self.election_jitter_ticks)
+                .is_none_or(|value| value > MAX_ELECTION_TICKS)
+        {
+            return Err(ConsensusError::InvalidElectionTimer(
+                "election timeout plus deterministic jitter exceeds the bound".into(),
+            ));
+        }
+        if self.heartbeat_interval_ticks >= self.election_timeout_ticks {
+            return Err(ConsensusError::InvalidElectionTimer(
+                "heartbeat interval must be less than the election timeout".into(),
+            ));
+        }
+        if self.failure_detector_ticks < self.election_timeout_ticks
+            || self.failure_detector_ticks > MAX_ELECTION_TICKS
+        {
+            return Err(ConsensusError::InvalidElectionTimer(
+                "failure detector interval must cover the election timeout and remain bounded"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeartbeatPlan {
+    pub term: u64,
+    pub leader_id: String,
+    pub peer_ids: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ElectionTimerAction {
+    Idle,
+    StartElection(VoteRequest),
+    SendHeartbeats(HeartbeatPlan),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1182,6 +1274,10 @@ pub struct ConsensusNode {
     lease_expiration_tick: Option<u64>,
     last_observed_tick: Option<u64>,
     clock_uncertain: bool,
+    election_timer_config: ElectionTimerConfig,
+    election_deadline_tick: Option<u64>,
+    heartbeat_due_tick: Option<u64>,
+    peer_last_heartbeat_tick: BTreeMap<String, u64>,
     read_rounds: BTreeMap<String, ReadIndexRound>,
     completed_read_requests: BTreeSet<String>,
 }
@@ -1227,6 +1323,10 @@ impl ConsensusNode {
             lease_expiration_tick: None,
             last_observed_tick: None,
             clock_uncertain: false,
+            election_timer_config: ElectionTimerConfig::default(),
+            election_deadline_tick: None,
+            heartbeat_due_tick: None,
+            peer_last_heartbeat_tick: BTreeMap::new(),
             read_rounds: BTreeMap::new(),
             completed_read_requests: BTreeSet::new(),
         })
@@ -1367,6 +1467,9 @@ impl ConsensusNode {
         self.last_observed_tick = Some(now_tick);
         self.clock_uncertain = false;
         self.invalidate_lease();
+        self.heartbeat_due_tick = None;
+        self.reset_election_deadline(now_tick)?;
+        self.peer_last_heartbeat_tick.clear();
         Ok(())
     }
 
@@ -1378,6 +1481,114 @@ impl ConsensusNode {
                     .checked_add(self.lease_config.max_clock_drift_ticks)
                     .is_some_and(|safe_now| safe_now < expiration)
             })
+    }
+
+    pub fn configure_election_timers(
+        &mut self,
+        config: ElectionTimerConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.election_timer_config = config;
+        self.election_deadline_tick = None;
+        self.heartbeat_due_tick = None;
+        self.peer_last_heartbeat_tick.clear();
+        Ok(())
+    }
+
+    pub fn election_timer_config(&self) -> ElectionTimerConfig {
+        self.election_timer_config
+    }
+
+    pub fn election_deadline_tick(&self) -> Option<u64> {
+        self.election_deadline_tick
+    }
+
+    pub fn record_peer_heartbeat(
+        &mut self,
+        peer_id: &str,
+        now_tick: u64,
+    ) -> Result<(), ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.accepted_members().contains(peer_id) || peer_id == self.id {
+            return Err(ConsensusError::InvalidPeer(peer_id.to_string()));
+        }
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        self.peer_last_heartbeat_tick
+            .insert(peer_id.to_string(), now_tick);
+        if self.role != ConsensusRole::Leader {
+            self.reset_election_deadline(now_tick)?;
+        }
+        Ok(())
+    }
+
+    pub fn peer_is_suspect(
+        &mut self,
+        peer_id: &str,
+        now_tick: u64,
+    ) -> Result<bool, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.accepted_members().contains(peer_id) || peer_id == self.id {
+            return Err(ConsensusError::InvalidPeer(peer_id.to_string()));
+        }
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        Ok(self
+            .peer_last_heartbeat_tick
+            .get(peer_id)
+            .is_none_or(|last| {
+                now_tick.saturating_sub(*last) >= self.election_timer_config.failure_detector_ticks
+            }))
+    }
+
+    pub fn tick(&mut self, now_tick: u64) -> Result<ElectionTimerAction, ConsensusError> {
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        match self.role {
+            ConsensusRole::Leader => {
+                let due = self.heartbeat_due_tick.unwrap_or(now_tick);
+                if now_tick < due {
+                    return Ok(ElectionTimerAction::Idle);
+                }
+                self.heartbeat_due_tick = Some(
+                    now_tick
+                        .checked_add(self.election_timer_config.heartbeat_interval_ticks)
+                        .ok_or_else(|| {
+                            ConsensusError::InvalidElectionTimer(
+                                "heartbeat deadline overflow".into(),
+                            )
+                        })?,
+                );
+                let peer_ids = self
+                    .accepted_members()
+                    .into_iter()
+                    .filter(|member| member != &self.id)
+                    .collect();
+                Ok(ElectionTimerAction::SendHeartbeats(HeartbeatPlan {
+                    term: self.current_term,
+                    leader_id: self.id.clone(),
+                    peer_ids,
+                }))
+            }
+            ConsensusRole::Follower | ConsensusRole::Candidate => {
+                let Some(deadline) = self.election_deadline_tick else {
+                    self.reset_election_deadline(now_tick)?;
+                    return Ok(ElectionTimerAction::Idle);
+                };
+                if now_tick < deadline {
+                    return Ok(ElectionTimerAction::Idle);
+                }
+                let request = self.start_election()?;
+                self.reset_election_deadline(now_tick)?;
+                Ok(ElectionTimerAction::StartElection(request))
+            }
+        }
     }
 
     pub fn prepare_linearizable_read(
@@ -1672,6 +1883,8 @@ impl ConsensusNode {
         }
         if self.has_vote_quorum(&self.votes_received) {
             self.role = ConsensusRole::Leader;
+            self.invalidate_lease();
+            self.heartbeat_due_tick = None;
             self.voted_for = Some(self.id.clone());
             self.replication_progress.clear();
             self.replication_progress
@@ -2133,9 +2346,33 @@ impl ConsensusNode {
         self.lease_expiration_tick = None;
     }
 
+    fn reset_election_deadline(&mut self, now_tick: u64) -> Result<(), ConsensusError> {
+        let jitter = if self.election_timer_config.election_jitter_ticks == 0 {
+            0
+        } else {
+            let seed = format!("{}:{}", self.id, self.current_term);
+            let digest = Sha256::digest(seed.as_bytes());
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&digest[..8]);
+            u64::from_be_bytes(bytes) % (self.election_timer_config.election_jitter_ticks + 1)
+        };
+        let duration = self
+            .election_timer_config
+            .election_timeout_ticks
+            .checked_add(jitter)
+            .ok_or_else(|| {
+                ConsensusError::InvalidElectionTimer("election deadline overflow".into())
+            })?;
+        self.election_deadline_tick = Some(now_tick.checked_add(duration).ok_or_else(|| {
+            ConsensusError::InvalidElectionTimer("election deadline overflow".into())
+        })?);
+        Ok(())
+    }
+
     fn step_down_and_invalidate(&mut self) {
         self.role = ConsensusRole::Follower;
         self.invalidate_lease();
+        self.heartbeat_due_tick = None;
         self.read_rounds.clear();
     }
 

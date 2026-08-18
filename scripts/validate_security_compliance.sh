@@ -45,6 +45,8 @@ cargo test --test phase13_transport_stress_integration >"$TMP_DIR/phase13-stress
 cargo run --quiet --release --bin un1c0-consensus-bench > benchmarks/consensus_partition_metrics.json
 printf '%s\n' '== Phase 14 leader leases and linearizable reads =='
 scripts/validate_phase14_read_optimization.sh >"$TMP_DIR/phase14-reads.log"
+printf '%s\n' '== Phase 15 election timers and failure detectors =='
+scripts/validate_phase15_election_timers.sh >"$TMP_DIR/phase15-timers.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
