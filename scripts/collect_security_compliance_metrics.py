@@ -72,6 +72,8 @@ def main() -> None:
             "durable_external_audit_sink": "passed",
             "phase11_membership_change": "passed",
             "failure_injection_snapshot_recovery": "passed",
+            "authenticated_socket_transport": "passed",
+            "replay_window_and_cluster_binding": "passed",
             "authenticated_partition_benchmark": "passed",
         },
         "benchmark_concurrency": 8,

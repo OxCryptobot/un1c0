@@ -19,6 +19,9 @@
 | Dynamic re-voting | Elections and commit acknowledgements use the active set; joint mode requires a majority in both old and new sets. |
 | Crash recovery | Snapshot staging can be explicitly recovered after a process abort before rename; invalid installs leave node state unchanged. |
 | Authenticated benchmark | Deterministic Ed25519 envelope benchmark reports verified/dropped messages, p95 verification time, throughput, and quorum availability under partitions. |
+| Socket transport | Length-prefixed TCP frames are bounded before allocation and carry typed authenticated envelopes. |
+| Cluster/replay binding | Envelopes bind cluster ID and sender ID; receivers use trusted keys and insertion-ordered bounded replay windows. |
+| Power-loss recovery | A process-abort fixture leaves a partial staging file, then explicit recovery removes it before atomic rewrite. |
 
 ## Evidence
 
@@ -26,4 +29,4 @@ The unit tests cover quorum election, leader replication, stale terms, command l
 
 ## Production boundary
 
-This slice is intentionally not a complete production consensus deployment. It still requires real socket/TLS or mesh transport, election timers and failure detectors, durable log compaction, membership configuration backup/restore, replay windows, backpressure, metrics export, and cross-machine partition testing before production promotion. The local partition benchmark measures in-process Ed25519 verification and drop filtering, not network latency or kernel behavior. Runtime policy and consent manifests remain authoritative for all tools, MCP methods, network access, and secrets; cluster membership does not grant any of those capabilities.
+This slice is intentionally not a complete production consensus deployment. It still requires mTLS or mesh confidentiality and peer authentication around the TCP frame layer, durable replay epochs across restart, election timers and failure detectors, durable log compaction, membership configuration backup/restore, backpressure, metrics export, and cross-machine partition testing before production promotion. The local partition benchmark measures in-process Ed25519 verification and drop filtering, not network latency or kernel behavior. Runtime policy and consent manifests remain authoritative for all tools, MCP methods, network access, and secrets; cluster membership does not grant any of those capabilities.

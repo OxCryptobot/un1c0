@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -20,6 +21,9 @@ const MAX_VALUE_BYTES: usize = 64 * 1024;
 const MAX_LOG_ENTRIES: usize = 100_000;
 const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_NONCE_BYTES: usize = 128;
+const MAX_CLUSTER_ID_BYTES: usize = 128;
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -53,6 +57,14 @@ pub enum ConsensusError {
     NoMembershipChange,
     #[error("membership change is already in progress")]
     MembershipChangeInProgress,
+    #[error("invalid cluster configuration: {0}")]
+    InvalidClusterConfiguration(String),
+    #[error("consensus replay detected for nonce")]
+    ReplayDetected,
+    #[error("consensus transport failed: {0}")]
+    Transport(String),
+    #[error("consensus frame exceeds the configured bound")]
+    FrameTooLarge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,12 +241,72 @@ impl ReplicatedSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthenticatedConsensusEnvelope {
+    pub cluster_id: String,
     pub sender_id: String,
     pub term: u64,
     pub nonce: String,
     pub message: ConsensusMessage,
     pub public_key: Vec<u8>,
     pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplayWindow {
+    cluster_id: String,
+    sender_id: String,
+    max_entries: usize,
+    next_sequence: u64,
+    seen: BTreeMap<String, u64>,
+}
+
+impl ReplayWindow {
+    pub fn new(cluster_id: &str, sender_id: &str, max_entries: usize) -> Result<Self, ConsensusError> {
+        validate_cluster_id(cluster_id)?;
+        validate_node_id(sender_id)?;
+        if max_entries == 0 || max_entries > MAX_LOG_ENTRIES {
+            return Err(ConsensusError::InvalidClusterConfiguration(
+                "replay window must be between 1 and the log bound".into(),
+            ));
+        }
+        Ok(Self {
+            cluster_id: cluster_id.to_string(),
+            sender_id: sender_id.to_string(),
+            max_entries,
+            next_sequence: 0,
+            seen: BTreeMap::new(),
+        })
+    }
+
+    pub fn accept(
+        &mut self,
+        envelope: &AuthenticatedConsensusEnvelope,
+        trusted_key: &[u8],
+    ) -> Result<(), ConsensusError> {
+        envelope.verify_for_cluster(&self.cluster_id, &self.sender_id, trusted_key)?;
+        if self.seen.contains_key(&envelope.nonce) {
+            return Err(ConsensusError::ReplayDetected);
+        }
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(ConsensusError::ReplayDetected)?;
+        self.seen.insert(envelope.nonce.clone(), self.next_sequence);
+        while self.seen.len() > self.max_entries {
+            let oldest = self
+                .seen
+                .iter()
+                .min_by_key(|(_, sequence)| **sequence)
+                .map(|(nonce, _)| nonce.clone());
+            if let Some(oldest) = oldest {
+                self.seen.remove(&oldest);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
 }
 
 impl AuthenticatedConsensusEnvelope {
@@ -245,6 +317,18 @@ impl AuthenticatedConsensusEnvelope {
         message: ConsensusMessage,
         signing_key: &SigningKey,
     ) -> Result<Self, ConsensusError> {
+        Self::sign_for_cluster(DEFAULT_CLUSTER_ID, sender_id, term, nonce, message, signing_key)
+    }
+
+    pub fn sign_for_cluster(
+        cluster_id: &str,
+        sender_id: &str,
+        term: u64,
+        nonce: &str,
+        message: ConsensusMessage,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ConsensusError> {
+        validate_cluster_id(cluster_id)?;
         validate_node_id(sender_id)?;
         validate_nonce(nonce)?;
         if term == 0 || message_term(&message) != term {
@@ -254,6 +338,7 @@ impl AuthenticatedConsensusEnvelope {
         }
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let mut envelope = Self {
+            cluster_id: cluster_id.to_string(),
             sender_id: sender_id.to_string(),
             term,
             nonce: nonce.to_string(),
@@ -267,12 +352,20 @@ impl AuthenticatedConsensusEnvelope {
     }
 
     pub fn verify(&self, expected_sender_id: &str, trusted_key: &[u8]) -> Result<(), ConsensusError> {
-        validate_node_id(expected_sender_id)?;
-        validate_node_id(&self.sender_id)?;
+        self.verify_for_cluster(&self.cluster_id, expected_sender_id, trusted_key)
+    }
+
+    pub fn verify_for_cluster(
+        &self,
+        expected_cluster_id: &str,
+        expected_sender_id: &str,
+        trusted_key: &[u8],
+    ) -> Result<(), ConsensusError> {
+        self.verify_cluster_sender(expected_cluster_id, expected_sender_id)?;
         validate_nonce(&self.nonce)?;
-        if self.sender_id != expected_sender_id || self.term == 0 || message_term(&self.message) != self.term {
+        if self.term == 0 || message_term(&self.message) != self.term {
             return Err(ConsensusError::Unauthenticated(
-                "sender identity or term binding mismatch".into(),
+                "term or message binding mismatch".into(),
             ));
         }
         if trusted_key != self.public_key.as_slice() {
@@ -297,8 +390,25 @@ impl AuthenticatedConsensusEnvelope {
             .map_err(|_| ConsensusError::Unauthenticated("invalid consensus signature".into()))
     }
 
+    pub fn verify_cluster_sender(
+        &self,
+        expected_cluster_id: &str,
+        expected_sender_id: &str,
+    ) -> Result<(), ConsensusError> {
+        validate_cluster_id(expected_cluster_id)?;
+        validate_node_id(expected_sender_id)?;
+        validate_node_id(&self.sender_id)?;
+        if self.cluster_id != expected_cluster_id || self.sender_id != expected_sender_id {
+            return Err(ConsensusError::Unauthenticated(
+                "cluster or sender identity binding mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn payload(&self) -> Result<Vec<u8>, ConsensusError> {
         serde_json::to_vec(&(
+            &self.cluster_id,
             &self.sender_id,
             self.term,
             &self.nonce,
@@ -306,6 +416,126 @@ impl AuthenticatedConsensusEnvelope {
             &self.public_key,
         ))
         .map_err(|error| ConsensusError::Serialization(error.to_string()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedSocketTransport {
+    cluster_id: String,
+    node_id: String,
+    trusted_keys: BTreeMap<String, Vec<u8>>,
+    replay_windows: BTreeMap<String, ReplayWindow>,
+    max_frame_bytes: usize,
+}
+
+impl AuthenticatedSocketTransport {
+    pub fn new(
+        cluster_id: &str,
+        node_id: &str,
+        trusted_keys: BTreeMap<String, Vec<u8>>,
+        replay_window_entries: usize,
+    ) -> Result<Self, ConsensusError> {
+        validate_cluster_id(cluster_id)?;
+        validate_node_id(node_id)?;
+        validate_members(&trusted_keys.keys().cloned().collect())?;
+        if !trusted_keys.contains_key(node_id) {
+            return Err(ConsensusError::InvalidClusterConfiguration(
+                "transport node must have a trusted public key".into(),
+            ));
+        }
+        let mut replay_windows = BTreeMap::new();
+        for sender_id in trusted_keys.keys() {
+            replay_windows.insert(
+                sender_id.clone(),
+                ReplayWindow::new(cluster_id, sender_id, replay_window_entries)?,
+            );
+        }
+        Ok(Self {
+            cluster_id: cluster_id.to_string(),
+            node_id: node_id.to_string(),
+            trusted_keys,
+            replay_windows,
+            max_frame_bytes: MAX_FRAME_BYTES,
+        })
+    }
+
+    pub fn cluster_id(&self) -> &str {
+        &self.cluster_id
+    }
+
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    pub fn send(
+        &self,
+        stream: &mut TcpStream,
+        envelope: &AuthenticatedConsensusEnvelope,
+    ) -> Result<(), ConsensusError> {
+        if envelope.sender_id != self.node_id {
+            return Err(ConsensusError::Unauthenticated(
+                "transport cannot send on behalf of another node".into(),
+            ));
+        }
+        envelope.verify_for_cluster(
+            &self.cluster_id,
+            &envelope.sender_id,
+            self.trusted_keys
+                .get(&envelope.sender_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?,
+        )?;
+        let bytes = serde_json::to_vec(envelope)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let length = (bytes.len() as u32).to_be_bytes();
+        stream
+            .write_all(&length)
+            .and_then(|_| stream.write_all(&bytes))
+            .and_then(|_| stream.flush())
+            .map_err(|error| ConsensusError::Transport(error.to_string()))
+    }
+
+    pub fn receive(
+        &mut self,
+        stream: &mut TcpStream,
+    ) -> Result<AuthenticatedConsensusEnvelope, ConsensusError> {
+        let mut length_bytes = [0u8; 4];
+        stream
+            .read_exact(&mut length_bytes)
+            .map_err(|error| ConsensusError::Transport(error.to_string()))?;
+        let length = u32::from_be_bytes(length_bytes) as usize;
+        if length == 0 || length > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let mut bytes = vec![0u8; length];
+        stream
+            .read_exact(&mut bytes)
+            .map_err(|error| ConsensusError::Transport(error.to_string()))?;
+        let envelope: AuthenticatedConsensusEnvelope = serde_json::from_slice(&bytes)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let trusted_key = self
+            .trusted_keys
+            .get(&envelope.sender_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
+        envelope.verify_for_cluster(&self.cluster_id, &envelope.sender_id, trusted_key)?;
+        let window = self
+            .replay_windows
+            .get_mut(&envelope.sender_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
+        window.accept(&envelope, trusted_key)?;
+        Ok(envelope)
+    }
+
+    pub fn listen_once(
+        &mut self,
+        listener: &TcpListener,
+    ) -> Result<AuthenticatedConsensusEnvelope, ConsensusError> {
+        let (mut stream, _) = listener
+            .accept()
+            .map_err(|error| ConsensusError::Transport(error.to_string()))?;
+        self.receive(&mut stream)
     }
 }
 
@@ -948,6 +1178,15 @@ fn validate_nonce(nonce: &str) -> Result<(), ConsensusError> {
     if nonce.trim().is_empty() || nonce.len() > MAX_NONCE_BYTES || nonce.chars().any(char::is_control) {
         return Err(ConsensusError::Unauthenticated(
             "consensus nonce must be bounded and contain no control characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_cluster_id(id: &str) -> Result<(), ConsensusError> {
+    if id.trim().is_empty() || id.len() > MAX_CLUSTER_ID_BYTES || id.chars().any(char::is_control) {
+        return Err(ConsensusError::InvalidClusterConfiguration(
+            "cluster ID must be 1 to 128 bytes and contain no control characters".into(),
         ));
     }
     Ok(())

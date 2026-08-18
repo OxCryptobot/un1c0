@@ -8,8 +8,8 @@ fn main() {
     let mut args = env::args().skip(1);
     let mode = args.next().unwrap_or_default();
     let target = args.next().unwrap_or_default();
-    if mode != "snapshot-stage-crash" || target.is_empty() {
-        eprintln!("usage: un1c0-failure-injector snapshot-stage-crash <snapshot-path>");
+    if mode != "snapshot-power-loss" || target.is_empty() {
+        eprintln!("usage: un1c0-failure-injector snapshot-power-loss <snapshot-path>");
         process::exit(2);
     }
     let target = Path::new(&target);

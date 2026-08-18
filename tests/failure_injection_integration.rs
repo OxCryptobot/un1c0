@@ -13,7 +13,7 @@ fn sudden_process_crash_leaves_recoverable_snapshot_stage() {
         .or_else(|_| std::env::var("CARGO_BIN_EXE_un1c0_failure_injector"))
         .unwrap();
     let status = Command::new(helper)
-        .args(["snapshot-stage-crash", target.to_str().unwrap()])
+        .args(["snapshot-power-loss", target.to_str().unwrap()])
         .status()
         .unwrap();
     assert!(!status.success());
