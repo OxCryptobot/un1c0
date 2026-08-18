@@ -1,0 +1,134 @@
+[
+  {
+    "path": "lease_fast_path",
+    "concurrency": 1,
+    "operations": 128,
+    "successful": 128,
+    "errors": 0,
+    "p50_us": 2,
+    "p95_us": 3,
+    "p99_us": 7,
+    "throughput_ops_per_sec": 181213.79263479193
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 1,
+    "operations": 128,
+    "successful": 128,
+    "errors": 0,
+    "p50_us": 5,
+    "p95_us": 9,
+    "p99_us": 15,
+    "throughput_ops_per_sec": 121312.8706321443
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 2,
+    "operations": 256,
+    "successful": 256,
+    "errors": 0,
+    "p50_us": 5,
+    "p95_us": 20,
+    "p99_us": 196,
+    "throughput_ops_per_sec": 112471.16278926727
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 2,
+    "operations": 256,
+    "successful": 256,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 97,
+    "p99_us": 248,
+    "throughput_ops_per_sec": 69052.2604230476
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 4,
+    "operations": 512,
+    "successful": 512,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 27,
+    "p99_us": 979,
+    "throughput_ops_per_sec": 74912.64702521439
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 4,
+    "operations": 512,
+    "successful": 512,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 34,
+    "p99_us": 426,
+    "throughput_ops_per_sec": 75276.53836133562
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 8,
+    "operations": 1024,
+    "successful": 1024,
+    "errors": 0,
+    "p50_us": 13,
+    "p95_us": 166,
+    "p99_us": 2033,
+    "throughput_ops_per_sec": 71759.3974677342
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 8,
+    "operations": 1024,
+    "successful": 1024,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 211,
+    "p99_us": 2103,
+    "throughput_ops_per_sec": 68638.3432956124
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 16,
+    "operations": 2048,
+    "successful": 2048,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 758,
+    "p99_us": 3170,
+    "throughput_ops_per_sec": 70699.89792011809
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 16,
+    "operations": 2048,
+    "successful": 2048,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 351,
+    "p99_us": 4482,
+    "throughput_ops_per_sec": 73282.81685407458
+  },
+  {
+    "path": "lease_fast_path",
+    "concurrency": 32,
+    "operations": 4096,
+    "successful": 4096,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 1884,
+    "p99_us": 6322,
+    "throughput_ops_per_sec": 77360.37778608083
+  },
+  {
+    "path": "quorum_read_index",
+    "concurrency": 32,
+    "operations": 4096,
+    "successful": 4096,
+    "errors": 0,
+    "p50_us": 14,
+    "p95_us": 1752,
+    "p99_us": 6334,
+    "throughput_ops_per_sec": 71580.84549700908
+  }
+]

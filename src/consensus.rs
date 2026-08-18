@@ -25,6 +25,9 @@ const MAX_CLUSTER_ID_BYTES: usize = 128;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_SNAPSHOT_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_SYNC_CHUNKS: usize = 256;
+const MAX_READ_ROUNDS: usize = 1_024;
+const MAX_COMPLETED_READ_REQUESTS: usize = 4_096;
+const MAX_LEASE_TICKS: u64 = 86_400_000;
 const DEFAULT_CLUSTER_ID: &str = "legacy-unbound";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -73,6 +76,20 @@ pub enum ConsensusError {
     SnapshotTransferIncomplete,
     #[error("incremental state synchronization conflict: {0}")]
     IncrementalSyncConflict(String),
+    #[error("invalid leader lease configuration: {0}")]
+    InvalidLeaderLease(String),
+    #[error("invalid linearizable read request: {0}")]
+    InvalidReadRequest(String),
+    #[error("read-index round is unknown: {0}")]
+    UnknownReadIndex(String),
+    #[error("read-index request was already completed: {0}")]
+    DuplicateReadRequest(String),
+    #[error("linearizable read is not ready: {0}")]
+    ReadNotReady(String),
+    #[error("leader lease has expired or is unsafe")]
+    LeaseExpired,
+    #[error("monotonic clock safety is uncertain")]
+    ClockUntrusted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,13 +101,20 @@ pub enum ConsensusRole {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StateCommand {
-    Set { key: String, value: String },
-    Delete { key: String },
+    Set {
+        key: String,
+        value: String,
+    },
+    Delete {
+        key: String,
+    },
     ConfigurationJoint {
         old_members: BTreeSet<String>,
         new_members: BTreeSet<String>,
     },
-    ConfigurationFinal { members: BTreeSet<String> },
+    ConfigurationFinal {
+        members: BTreeSet<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +237,116 @@ pub struct AppendResponse {
     pub match_index: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeaderLeaseConfig {
+    pub lease_ticks: u64,
+    pub max_clock_drift_ticks: u64,
+}
+
+impl Default for LeaderLeaseConfig {
+    fn default() -> Self {
+        Self {
+            lease_ticks: 1_000,
+            max_clock_drift_ticks: 10,
+        }
+    }
+}
+
+impl LeaderLeaseConfig {
+    pub fn new(lease_ticks: u64, max_clock_drift_ticks: u64) -> Result<Self, ConsensusError> {
+        let config = Self {
+            lease_ticks,
+            max_clock_drift_ticks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        if self.lease_ticks == 0 || self.lease_ticks > MAX_LEASE_TICKS {
+            return Err(ConsensusError::InvalidLeaderLease(format!(
+                "lease ticks must be between 1 and {}",
+                MAX_LEASE_TICKS
+            )));
+        }
+        if self.max_clock_drift_ticks >= self.lease_ticks {
+            return Err(ConsensusError::InvalidLeaderLease(
+                "clock drift must be strictly less than the lease duration".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadIndexRequest {
+    pub request_id: String,
+    pub term: u64,
+    pub leader_id: String,
+    pub read_index: u64,
+}
+
+impl ReadIndexRequest {
+    pub fn new(
+        request_id: &str,
+        term: u64,
+        leader_id: &str,
+        read_index: u64,
+    ) -> Result<Self, ConsensusError> {
+        let request = Self {
+            request_id: request_id.to_string(),
+            term,
+            leader_id: leader_id.to_string(),
+            read_index,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_read_request_id(&self.request_id)?;
+        validate_node_id(&self.leader_id)?;
+        if self.term == 0 {
+            return Err(ConsensusError::InvalidReadRequest(
+                "read-index term must be positive".into(),
+            ));
+        }
+        if self.read_index > MAX_LOG_ENTRIES as u64 {
+            return Err(ConsensusError::InvalidReadRequest(
+                "read-index exceeds the bounded log frontier".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadIndexResponse {
+    pub request_id: String,
+    pub term: u64,
+    pub follower_id: String,
+    pub read_index: u64,
+    pub accepted: bool,
+}
+
+impl ReadIndexResponse {
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_read_request_id(&self.request_id)?;
+        validate_node_id(&self.follower_id)?;
+        if self.term == 0 {
+            return Err(ConsensusError::InvalidReadRequest(
+                "read-index response term must be positive".into(),
+            ));
+        }
+        if self.read_index > MAX_LOG_ENTRIES as u64 {
+            return Err(ConsensusError::InvalidReadRequest(
+                "read-index response exceeds the bounded log frontier".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ConsensusMessage {
     VoteRequest(VoteRequest),
@@ -222,6 +356,50 @@ pub enum ConsensusMessage {
     SnapshotManifest(SnapshotManifest),
     SnapshotChunk(SnapshotChunk),
     StateDelta(StateDelta),
+    ReadIndexRequest(ReadIndexRequest),
+    ReadIndexResponse(ReadIndexResponse),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinearizableReadRequest {
+    pub request_id: String,
+    pub key: String,
+    pub now_tick: u64,
+}
+
+impl LinearizableReadRequest {
+    pub fn new(request_id: &str, key: &str, now_tick: u64) -> Result<Self, ConsensusError> {
+        let request = Self {
+            request_id: request_id.to_string(),
+            key: key.to_string(),
+            now_tick,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        validate_read_request_id(&self.request_id)?;
+        validate_key(&self.key).map_err(|error| {
+            ConsensusError::InvalidReadRequest(format!("invalid query key: {}", error))
+        })?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinearizableReadPlan {
+    pub request_id: String,
+    pub key: String,
+    pub term: u64,
+    pub read_index: u64,
+    pub lease_fast_path: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReadIndexAction {
+    Lease(LinearizableReadPlan),
+    Quorum(ReadIndexRequest),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -273,7 +451,10 @@ impl SnapshotManifest {
                 "transfer ID is invalid".into(),
             ));
         }
-        if self.term == 0 || self.chunk_size == 0 || self.chunk_size as usize > MAX_SNAPSHOT_CHUNK_BYTES {
+        if self.term == 0
+            || self.chunk_size == 0
+            || self.chunk_size as usize > MAX_SNAPSHOT_CHUNK_BYTES
+        {
             return Err(ConsensusError::InvalidSnapshotChunk(
                 "manifest term or chunk size is invalid".into(),
             ));
@@ -365,7 +546,11 @@ pub struct SnapshotChunker {
 }
 
 impl SnapshotChunker {
-    pub fn from_snapshot(snapshot: &ReplicatedSnapshot, transfer_id: &str, chunk_size: usize) -> Result<Self, ConsensusError> {
+    pub fn from_snapshot(
+        snapshot: &ReplicatedSnapshot,
+        transfer_id: &str,
+        chunk_size: usize,
+    ) -> Result<Self, ConsensusError> {
         snapshot.validate()?;
         if chunk_size == 0 || chunk_size > MAX_SNAPSHOT_CHUNK_BYTES {
             return Err(ConsensusError::InvalidSnapshotChunk(
@@ -524,9 +709,9 @@ impl StateDelta {
                 "delta must contain 1 to MAX_BATCH_ENTRIES entries".into(),
             ));
         }
-        let target_index = base_index
-            .checked_add(entries.len() as u64)
-            .ok_or(ConsensusError::IncrementalSyncConflict("delta index overflow".into()))?;
+        let target_index = base_index.checked_add(entries.len() as u64).ok_or(
+            ConsensusError::IncrementalSyncConflict("delta index overflow".into()),
+        )?;
         for (offset, entry) in entries.iter().enumerate() {
             entry.validate(base_index + offset as u64 + 1)?;
         }
@@ -586,7 +771,11 @@ pub struct ReplayWindow {
 }
 
 impl ReplayWindow {
-    pub fn new(cluster_id: &str, sender_id: &str, max_entries: usize) -> Result<Self, ConsensusError> {
+    pub fn new(
+        cluster_id: &str,
+        sender_id: &str,
+        max_entries: usize,
+    ) -> Result<Self, ConsensusError> {
         validate_cluster_id(cluster_id)?;
         validate_node_id(sender_id)?;
         if max_entries == 0 || max_entries > MAX_LOG_ENTRIES {
@@ -643,7 +832,14 @@ impl AuthenticatedConsensusEnvelope {
         message: ConsensusMessage,
         signing_key: &SigningKey,
     ) -> Result<Self, ConsensusError> {
-        Self::sign_for_cluster(DEFAULT_CLUSTER_ID, sender_id, term, nonce, message, signing_key)
+        Self::sign_for_cluster(
+            DEFAULT_CLUSTER_ID,
+            sender_id,
+            term,
+            nonce,
+            message,
+            signing_key,
+        )
     }
 
     pub fn sign_for_cluster(
@@ -677,7 +873,11 @@ impl AuthenticatedConsensusEnvelope {
         Ok(envelope)
     }
 
-    pub fn verify(&self, expected_sender_id: &str, trusted_key: &[u8]) -> Result<(), ConsensusError> {
+    pub fn verify(
+        &self,
+        expected_sender_id: &str,
+        trusted_key: &[u8],
+    ) -> Result<(), ConsensusError> {
         self.verify_for_cluster(&self.cluster_id, expected_sender_id, trusted_key)
     }
 
@@ -699,16 +899,14 @@ impl AuthenticatedConsensusEnvelope {
                 "sender public key is not bound to the trusted identity".into(),
             ));
         }
-        let key: [u8; 32] = self
-            .public_key
-            .as_slice()
-            .try_into()
-            .map_err(|_| ConsensusError::Unauthenticated("public key must be 32 bytes".into()))?;
-        let signature: [u8; 64] = self
-            .signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| ConsensusError::Unauthenticated("signature must be 64 bytes".into()))?;
+        let key: [u8; 32] =
+            self.public_key.as_slice().try_into().map_err(|_| {
+                ConsensusError::Unauthenticated("public key must be 32 bytes".into())
+            })?;
+        let signature: [u8; 64] =
+            self.signature.as_slice().try_into().map_err(|_| {
+                ConsensusError::Unauthenticated("signature must be 64 bytes".into())
+            })?;
         let verifying_key = VerifyingKey::from_bytes(&key)
             .map_err(|_| ConsensusError::Unauthenticated("invalid public key".into()))?;
         verifying_key
@@ -891,7 +1089,10 @@ impl DurableSnapshotStore {
             .map_err(|error| ConsensusError::SnapshotPersistence(error.to_string()))?;
         let temporary = parent.join(format!(
             ".{}.tmp",
-            self.path.file_name().and_then(|name| name.to_str()).unwrap_or("snapshot")
+            self.path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("snapshot")
         ));
         let mut file = OpenOptions::new()
             .write(true)
@@ -916,7 +1117,10 @@ impl DurableSnapshotStore {
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         let temporary = parent.join(format!(
             ".{}.tmp",
-            self.path.file_name().and_then(|name| name.to_str()).unwrap_or("snapshot")
+            self.path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("snapshot")
         ));
         if !temporary.exists() {
             return Ok(false);
@@ -948,6 +1152,15 @@ impl DurableSnapshotStore {
 }
 
 #[derive(Debug, Clone)]
+struct ReadIndexRound {
+    request_id: String,
+    key: String,
+    term: u64,
+    read_index: u64,
+    acknowledgements: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ConsensusNode {
     id: String,
     members: BTreeSet<String>,
@@ -965,6 +1178,12 @@ pub struct ConsensusNode {
     state: BTreeMap<String, String>,
     votes_received: BTreeSet<String>,
     replication_progress: BTreeMap<String, u64>,
+    lease_config: LeaderLeaseConfig,
+    lease_expiration_tick: Option<u64>,
+    last_observed_tick: Option<u64>,
+    clock_uncertain: bool,
+    read_rounds: BTreeMap<String, ReadIndexRound>,
+    completed_read_requests: BTreeSet<String>,
 }
 
 impl ConsensusNode {
@@ -1004,6 +1223,12 @@ impl ConsensusNode {
             state: BTreeMap::new(),
             votes_received: BTreeSet::new(),
             replication_progress: BTreeMap::new(),
+            lease_config: LeaderLeaseConfig::default(),
+            lease_expiration_tick: None,
+            last_observed_tick: None,
+            clock_uncertain: false,
+            read_rounds: BTreeMap::new(),
+            completed_read_requests: BTreeSet::new(),
         })
     }
 
@@ -1069,6 +1294,8 @@ impl ConsensusNode {
         self.configuration_phase = ConfigurationPhase::Joint;
         self.joint_config_index = Some(entry.index);
         self.pending_finalization = None;
+        self.invalidate_lease();
+        self.read_rounds.clear();
         self.rebuild_replication_progress();
         Ok(entry)
     }
@@ -1092,10 +1319,12 @@ impl ConsensusNode {
         let entry = self.propose(StateCommand::ConfigurationFinal {
             members: self.members.clone(),
         })?;
+        self.invalidate_lease();
+        self.read_rounds.clear();
         self.pending_finalization = Some(entry.index);
         self.rebuild_replication_progress();
         if !self.members.contains(&self.id) && old_members.contains(&self.id) {
-            self.role = ConsensusRole::Follower;
+            self.step_down_and_invalidate();
             self.voted_for = None;
         }
         Ok(entry)
@@ -1103,6 +1332,229 @@ impl ConsensusNode {
 
     pub fn state_value(&self, key: &str) -> Option<&str> {
         self.state.get(key).map(String::as_str)
+    }
+
+    pub fn configure_leader_lease(
+        &mut self,
+        config: LeaderLeaseConfig,
+    ) -> Result<(), ConsensusError> {
+        config.validate()?;
+        self.lease_config = config;
+        self.invalidate_lease();
+        Ok(())
+    }
+
+    pub fn leader_lease_config(&self) -> LeaderLeaseConfig {
+        self.lease_config
+    }
+
+    pub fn lease_expiration_tick(&self) -> Option<u64> {
+        self.lease_expiration_tick
+    }
+
+    pub fn clock_is_trusted(&self) -> bool {
+        !self.clock_uncertain
+    }
+
+    pub fn reanchor_monotonic_clock(&mut self, now_tick: u64) -> Result<(), ConsensusError> {
+        if self
+            .last_observed_tick
+            .is_some_and(|previous| now_tick < previous)
+            && !self.clock_uncertain
+        {
+            return Err(ConsensusError::ClockUntrusted);
+        }
+        self.last_observed_tick = Some(now_tick);
+        self.clock_uncertain = false;
+        self.invalidate_lease();
+        Ok(())
+    }
+
+    pub fn lease_is_valid(&self, now_tick: u64) -> bool {
+        !self.clock_uncertain
+            && self.role == ConsensusRole::Leader
+            && self.lease_expiration_tick.is_some_and(|expiration| {
+                now_tick
+                    .checked_add(self.lease_config.max_clock_drift_ticks)
+                    .is_some_and(|safe_now| safe_now < expiration)
+            })
+    }
+
+    pub fn prepare_linearizable_read(
+        &mut self,
+        request: LinearizableReadRequest,
+    ) -> Result<ReadIndexAction, ConsensusError> {
+        request.validate()?;
+        if self.role != ConsensusRole::Leader {
+            return Err(ConsensusError::NotLeader);
+        }
+        self.observe_tick(request.now_tick);
+        if self.completed_read_requests.contains(&request.request_id) {
+            return Err(ConsensusError::DuplicateReadRequest(request.request_id));
+        }
+        if self.lease_is_valid(request.now_tick) {
+            return Ok(ReadIndexAction::Lease(LinearizableReadPlan {
+                request_id: request.request_id,
+                key: request.key,
+                term: self.current_term,
+                read_index: self.commit_index,
+                lease_fast_path: true,
+            }));
+        }
+        if let Some(round) = self.read_rounds.get(&request.request_id) {
+            if round.key != request.key {
+                return Err(ConsensusError::DuplicateReadRequest(request.request_id));
+            }
+            return Ok(ReadIndexAction::Quorum(ReadIndexRequest::new(
+                &round.request_id,
+                round.term,
+                &self.id,
+                round.read_index,
+            )?));
+        }
+        if self.read_rounds.len() >= MAX_READ_ROUNDS {
+            return Err(ConsensusError::InvalidReadRequest(
+                "too many in-flight read-index rounds".into(),
+            ));
+        }
+        let read_index = self.commit_index;
+        let read_request =
+            ReadIndexRequest::new(&request.request_id, self.current_term, &self.id, read_index)?;
+        let mut acknowledgements = BTreeSet::new();
+        acknowledgements.insert(self.id.clone());
+        self.read_rounds.insert(
+            request.request_id.clone(),
+            ReadIndexRound {
+                request_id: request.request_id,
+                key: request.key,
+                term: self.current_term,
+                read_index,
+                acknowledgements,
+            },
+        );
+        Ok(ReadIndexAction::Quorum(read_request))
+    }
+
+    pub fn handle_read_index_request(
+        &mut self,
+        request: ReadIndexRequest,
+    ) -> Result<ReadIndexResponse, ConsensusError> {
+        request.validate()?;
+        if !self.accepted_members().contains(&request.leader_id) {
+            return Err(ConsensusError::UnknownMember(request.leader_id));
+        }
+        if request.term < self.current_term {
+            return Ok(ReadIndexResponse {
+                request_id: request.request_id,
+                term: self.current_term,
+                follower_id: self.id.clone(),
+                read_index: request.read_index,
+                accepted: false,
+            });
+        }
+        if request.term > self.current_term {
+            self.current_term = request.term;
+            self.step_down_and_invalidate();
+            self.voted_for = None;
+            self.votes_received.clear();
+        } else {
+            self.invalidate_lease();
+        }
+        self.role = ConsensusRole::Follower;
+        Ok(ReadIndexResponse {
+            request_id: request.request_id,
+            term: self.current_term,
+            follower_id: self.id.clone(),
+            read_index: request.read_index,
+            accepted: request.read_index <= self.commit_index,
+        })
+    }
+
+    pub fn acknowledge_read_index(
+        &mut self,
+        response: ReadIndexResponse,
+        now_tick: u64,
+    ) -> Result<Option<LinearizableReadPlan>, ConsensusError> {
+        response.validate()?;
+        if !self.accepted_members().contains(&response.follower_id) {
+            return Err(ConsensusError::UnknownMember(response.follower_id));
+        }
+        self.observe_tick(now_tick);
+        if response.term > self.current_term {
+            self.current_term = response.term;
+            self.step_down_and_invalidate();
+            self.voted_for = None;
+            self.votes_received.clear();
+            return Ok(None);
+        }
+        if self.role != ConsensusRole::Leader || response.term != self.current_term {
+            return Ok(None);
+        }
+        if self.completed_read_requests.contains(&response.request_id) {
+            return Err(ConsensusError::DuplicateReadRequest(response.request_id));
+        }
+        let quorum_reached = {
+            let Some(round) = self.read_rounds.get_mut(&response.request_id) else {
+                return Err(ConsensusError::UnknownReadIndex(response.request_id));
+            };
+            if response.read_index != round.read_index || response.term != round.term {
+                return Err(ConsensusError::InvalidReadRequest(
+                    "read-index response does not match the active round".into(),
+                ));
+            }
+            if response.accepted {
+                round.acknowledgements.insert(response.follower_id);
+            }
+            let acknowledgements = round.acknowledgements.clone();
+            response.accepted && self.has_vote_quorum(&acknowledgements)
+        };
+        if !quorum_reached {
+            return Ok(None);
+        }
+        let round = self
+            .read_rounds
+            .remove(&response.request_id)
+            .expect("active read-index round exists");
+        self.install_lease(now_tick);
+        Ok(Some(LinearizableReadPlan {
+            request_id: round.request_id,
+            key: round.key,
+            term: round.term,
+            read_index: round.read_index,
+            lease_fast_path: false,
+        }))
+    }
+
+    pub fn execute_linearizable_read(
+        &mut self,
+        plan: LinearizableReadPlan,
+        now_tick: u64,
+    ) -> Result<Option<String>, ConsensusError> {
+        validate_read_request_id(&plan.request_id)?;
+        validate_key(&plan.key).map_err(|error| {
+            ConsensusError::InvalidReadRequest(format!("invalid query key: {}", error))
+        })?;
+        self.observe_tick(now_tick);
+        if self.role != ConsensusRole::Leader || plan.term != self.current_term {
+            return Err(ConsensusError::ReadNotReady(
+                "the read plan is from a different leader term".into(),
+            ));
+        }
+        if plan.lease_fast_path && !self.lease_is_valid(now_tick) {
+            return Err(ConsensusError::LeaseExpired);
+        }
+        if plan.read_index > self.commit_index || self.last_applied < plan.read_index {
+            return Err(ConsensusError::ReadNotReady(format!(
+                "applied index {} is below read index {}",
+                self.last_applied, plan.read_index
+            )));
+        }
+        if self.completed_read_requests.contains(&plan.request_id) {
+            return Err(ConsensusError::DuplicateReadRequest(plan.request_id));
+        }
+        let value = self.state.get(&plan.key).cloned();
+        self.remember_completed_read(&plan.request_id);
+        Ok(value)
     }
 
     pub fn snapshot(&self) -> Result<ReplicatedSnapshot, ConsensusError> {
@@ -1130,7 +1582,7 @@ impl ConsensusNode {
             ));
         }
         self.current_term = snapshot.term;
-        self.role = ConsensusRole::Follower;
+        self.step_down_and_invalidate();
         self.voted_for = None;
         self.votes_received.clear();
         self.commit_index = snapshot.commit_index;
@@ -1146,6 +1598,8 @@ impl ConsensusNode {
             .current_term
             .checked_add(1)
             .ok_or(ConsensusError::TermOverflow)?;
+        self.invalidate_lease();
+        self.read_rounds.clear();
         self.role = ConsensusRole::Candidate;
         self.voted_for = Some(self.id.clone());
         self.votes_received.clear();
@@ -1169,7 +1623,7 @@ impl ConsensusNode {
         }
         if request.term > self.current_term {
             self.current_term = request.term;
-            self.role = ConsensusRole::Follower;
+            self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
         }
@@ -1177,13 +1631,14 @@ impl ConsensusNode {
         if request.term == self.current_term {
             let (last_log_index, last_log_term) = self.last_log_position();
             let up_to_date = request.last_log_term > last_log_term
-                || (request.last_log_term == last_log_term && request.last_log_index >= last_log_index);
+                || (request.last_log_term == last_log_term
+                    && request.last_log_index >= last_log_index);
             if up_to_date
                 && (self.voted_for.is_none()
                     || self.voted_for.as_deref() == Some(request.candidate_id.as_str()))
             {
                 self.voted_for = Some(request.candidate_id.clone());
-                self.role = ConsensusRole::Follower;
+                self.step_down_and_invalidate();
                 granted = true;
             }
         }
@@ -1194,14 +1649,17 @@ impl ConsensusNode {
         })
     }
 
-    pub fn receive_vote_response(&mut self, response: VoteResponse) -> Result<bool, ConsensusError> {
+    pub fn receive_vote_response(
+        &mut self,
+        response: VoteResponse,
+    ) -> Result<bool, ConsensusError> {
         validate_node_id(&response.voter_id)?;
         if !self.members.contains(&response.voter_id) {
             return Err(ConsensusError::UnknownMember(response.voter_id));
         }
         if response.term > self.current_term {
             self.current_term = response.term;
-            self.role = ConsensusRole::Follower;
+            self.step_down_and_invalidate();
             self.voted_for = None;
             self.votes_received.clear();
             return Ok(false);
@@ -1314,6 +1772,7 @@ impl ConsensusNode {
         }
         if delta.term > self.current_term {
             self.current_term = delta.term;
+            self.step_down_and_invalidate();
             self.voted_for = None;
         }
         if delta.base_index > self.log.len() as u64 {
@@ -1337,9 +1796,11 @@ impl ConsensusNode {
                 self.log.push(entry);
             }
         }
-        self.role = ConsensusRole::Follower;
+        self.step_down_and_invalidate();
         self.votes_received.clear();
-        self.commit_index = self.commit_index.max(delta.leader_commit.min(delta.target_index));
+        self.commit_index = self
+            .commit_index
+            .max(delta.leader_commit.min(delta.target_index));
         self.commit_index = self.commit_index.min(self.log.len() as u64);
         self.apply_committed();
         Ok(delta.target_index)
@@ -1376,9 +1837,9 @@ impl ConsensusNode {
                 .collect::<Vec<_>>();
             let mut plans = BTreeMap::new();
             for handle in handles {
-                let (follower_id, delta) = handle
-                    .join()
-                    .map_err(|_| ConsensusError::IncrementalSyncConflict("catch-up worker panicked".into()))??;
+                let (follower_id, delta) = handle.join().map_err(|_| {
+                    ConsensusError::IncrementalSyncConflict("catch-up worker panicked".into())
+                })??;
                 if let Some(delta) = delta {
                     plans.insert(follower_id, delta);
                 }
@@ -1454,7 +1915,7 @@ impl ConsensusNode {
             self.current_term = request.term;
             self.voted_for = None;
         }
-        self.role = ConsensusRole::Follower;
+        self.step_down_and_invalidate();
         self.votes_received.clear();
         if request.prev_log_index > self.log.len() as u64 {
             return Ok(AppendResponse {
@@ -1509,7 +1970,7 @@ impl ConsensusNode {
         }
         if response.term > self.current_term {
             self.current_term = response.term;
-            self.role = ConsensusRole::Follower;
+            self.step_down_and_invalidate();
             self.voted_for = None;
             return Ok(false);
         }
@@ -1594,6 +2055,8 @@ impl ConsensusNode {
             configuration_changed = true;
         }
         if configuration_changed {
+            self.invalidate_lease();
+            self.read_rounds.clear();
             self.rebuild_replication_progress();
         }
     }
@@ -1611,17 +2074,19 @@ impl ConsensusNode {
         if current_votes < quorum_size(&self.members) {
             return false;
         }
-        self.previous_members.as_ref().is_none_or(|previous| {
-            voters.intersection(previous).count() >= quorum_size(previous)
-        })
+        self.previous_members
+            .as_ref()
+            .is_none_or(|previous| voters.intersection(previous).count() >= quorum_size(previous))
     }
 
     fn rebuild_replication_progress(&mut self) {
         let previous = self.replication_progress.clone();
         self.replication_progress.clear();
         for member in self.accepted_members() {
-            self.replication_progress
-                .insert(member.clone(), previous.get(&member).copied().unwrap_or_default());
+            self.replication_progress.insert(
+                member.clone(),
+                previous.get(&member).copied().unwrap_or_default(),
+            );
         }
         self.replication_progress
             .insert(self.id.clone(), self.log.len() as u64);
@@ -1633,6 +2098,67 @@ impl ConsensusNode {
             .map(|entry| (entry.index, entry.term))
             .unwrap_or((0, 0))
     }
+
+    fn observe_tick(&mut self, now_tick: u64) {
+        if self
+            .last_observed_tick
+            .is_some_and(|previous| now_tick < previous)
+        {
+            self.invalidate_lease();
+            self.clock_uncertain = true;
+        }
+        self.last_observed_tick = Some(now_tick);
+        if self.lease_expiration_tick.is_some_and(|expiration| {
+            now_tick
+                .checked_add(self.lease_config.max_clock_drift_ticks)
+                .is_none_or(|safe_now| safe_now >= expiration)
+        }) {
+            self.invalidate_lease();
+        }
+    }
+
+    fn install_lease(&mut self, now_tick: u64) {
+        self.observe_tick(now_tick);
+        if self.clock_uncertain {
+            self.invalidate_lease();
+            return;
+        }
+        self.lease_expiration_tick = now_tick.checked_add(self.lease_config.lease_ticks);
+        if self.lease_expiration_tick.is_none() {
+            self.invalidate_lease();
+        }
+    }
+
+    fn invalidate_lease(&mut self) {
+        self.lease_expiration_tick = None;
+    }
+
+    fn step_down_and_invalidate(&mut self) {
+        self.role = ConsensusRole::Follower;
+        self.invalidate_lease();
+        self.read_rounds.clear();
+    }
+
+    fn remember_completed_read(&mut self, request_id: &str) {
+        if self.completed_read_requests.len() >= MAX_COMPLETED_READ_REQUESTS {
+            if let Some(oldest) = self.completed_read_requests.iter().next().cloned() {
+                self.completed_read_requests.remove(&oldest);
+            }
+        }
+        self.completed_read_requests.insert(request_id.to_string());
+    }
+}
+
+fn validate_read_request_id(request_id: &str) -> Result<(), ConsensusError> {
+    if request_id.trim().is_empty()
+        || request_id.len() > MAX_NONCE_BYTES
+        || request_id.chars().any(char::is_control)
+    {
+        return Err(ConsensusError::InvalidReadRequest(
+            "read request ID must be bounded and contain no control characters".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn message_term(message: &ConsensusMessage) -> u64 {
@@ -1644,11 +2170,16 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::SnapshotManifest(value) => value.term,
         ConsensusMessage::SnapshotChunk(value) => value.term,
         ConsensusMessage::StateDelta(value) => value.term,
+        ConsensusMessage::ReadIndexRequest(value) => value.term,
+        ConsensusMessage::ReadIndexResponse(value) => value.term,
     }
 }
 
 fn validate_nonce(nonce: &str) -> Result<(), ConsensusError> {
-    if nonce.trim().is_empty() || nonce.len() > MAX_NONCE_BYTES || nonce.chars().any(char::is_control) {
+    if nonce.trim().is_empty()
+        || nonce.len() > MAX_NONCE_BYTES
+        || nonce.chars().any(char::is_control)
+    {
         return Err(ConsensusError::Unauthenticated(
             "consensus nonce must be bounded and contain no control characters".into(),
         ));
@@ -1773,7 +2304,10 @@ mod tests {
         let commit_notice = leader.append_entries_for("node-c").unwrap();
         follower_c.handle_append_entries(commit_notice).unwrap();
         assert_eq!(follower_c.state_value("feature/mcp"), Some("enabled"));
-        assert_eq!(leader.snapshot().unwrap().state_hash, follower_c.snapshot().unwrap().state_hash);
+        assert_eq!(
+            leader.snapshot().unwrap().state_hash,
+            follower_c.snapshot().unwrap().state_hash
+        );
     }
 
     #[test]

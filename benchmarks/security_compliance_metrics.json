@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 39.179,
-        "verification_throughput_ops_per_sec": 27310.23050055769
+        "verification_p95_us": 44.476,
+        "verification_throughput_ops_per_sec": 26904.040658677717
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 36.124,
-        "verification_throughput_ops_per_sec": 27327.41605708547
+        "verification_p95_us": 36.305,
+        "verification_throughput_ops_per_sec": 27232.676052272305
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 36.074,
-        "verification_throughput_ops_per_sec": 27316.937252312197
+        "verification_p95_us": 36.094,
+        "verification_throughput_ops_per_sec": 27305.672186804095
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "24ab43f90b732beb7ada8fb7ff5aaf6a6e7947dc",
+  "commit": "fbfcad83cef6fd6d9c16ef519e248212241727ef",
   "gates": {
     "authenticated_consensus_transport": "passed",
     "authenticated_partition_benchmark": "passed",
@@ -56,6 +56,8 @@
     "failure_injection_snapshot_recovery": "passed",
     "helm_fail_closed": "passed",
     "incremental_state_sync": "passed",
+    "leader_lease_read_optimization": "passed",
+    "linearizable_read_consistency": "passed",
     "network_stress_packet_corruption": "passed",
     "phase11_membership_change": "passed",
     "python_tests": "passed",
@@ -66,7 +68,7 @@
     "snapshot_chunk_streaming": "passed",
     "snapshot_installation": "passed"
   },
-  "generated_at_utc": "2026-08-18T02:30:39.480781+00:00",
+  "generated_at_utc": "2026-08-18T02:48:01.066443+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -144,6 +146,140 @@
       "optimized_p95_ms": 0.090578,
       "optimized_p99_ms": 0.17137,
       "optimized_throughput_ops_per_sec": 208754.80057758276
+    }
+  ],
+  "phase14_read_optimization": [
+    {
+      "concurrency": 1,
+      "errors": 0,
+      "operations": 128,
+      "p50_us": 2,
+      "p95_us": 3,
+      "p99_us": 7,
+      "path": "lease_fast_path",
+      "successful": 128,
+      "throughput_ops_per_sec": 181213.79263479193
+    },
+    {
+      "concurrency": 1,
+      "errors": 0,
+      "operations": 128,
+      "p50_us": 5,
+      "p95_us": 9,
+      "p99_us": 15,
+      "path": "quorum_read_index",
+      "successful": 128,
+      "throughput_ops_per_sec": 121312.8706321443
+    },
+    {
+      "concurrency": 2,
+      "errors": 0,
+      "operations": 256,
+      "p50_us": 5,
+      "p95_us": 20,
+      "p99_us": 196,
+      "path": "lease_fast_path",
+      "successful": 256,
+      "throughput_ops_per_sec": 112471.16278926727
+    },
+    {
+      "concurrency": 2,
+      "errors": 0,
+      "operations": 256,
+      "p50_us": 14,
+      "p95_us": 97,
+      "p99_us": 248,
+      "path": "quorum_read_index",
+      "successful": 256,
+      "throughput_ops_per_sec": 69052.2604230476
+    },
+    {
+      "concurrency": 4,
+      "errors": 0,
+      "operations": 512,
+      "p50_us": 13,
+      "p95_us": 27,
+      "p99_us": 979,
+      "path": "lease_fast_path",
+      "successful": 512,
+      "throughput_ops_per_sec": 74912.64702521439
+    },
+    {
+      "concurrency": 4,
+      "errors": 0,
+      "operations": 512,
+      "p50_us": 13,
+      "p95_us": 34,
+      "p99_us": 426,
+      "path": "quorum_read_index",
+      "successful": 512,
+      "throughput_ops_per_sec": 75276.53836133562
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "operations": 1024,
+      "p50_us": 13,
+      "p95_us": 166,
+      "p99_us": 2033,
+      "path": "lease_fast_path",
+      "successful": 1024,
+      "throughput_ops_per_sec": 71759.3974677342
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "operations": 1024,
+      "p50_us": 14,
+      "p95_us": 211,
+      "p99_us": 2103,
+      "path": "quorum_read_index",
+      "successful": 1024,
+      "throughput_ops_per_sec": 68638.3432956124
+    },
+    {
+      "concurrency": 16,
+      "errors": 0,
+      "operations": 2048,
+      "p50_us": 14,
+      "p95_us": 758,
+      "p99_us": 3170,
+      "path": "lease_fast_path",
+      "successful": 2048,
+      "throughput_ops_per_sec": 70699.89792011809
+    },
+    {
+      "concurrency": 16,
+      "errors": 0,
+      "operations": 2048,
+      "p50_us": 14,
+      "p95_us": 351,
+      "p99_us": 4482,
+      "path": "quorum_read_index",
+      "successful": 2048,
+      "throughput_ops_per_sec": 73282.81685407458
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "operations": 4096,
+      "p50_us": 14,
+      "p95_us": 1884,
+      "p99_us": 6322,
+      "path": "lease_fast_path",
+      "successful": 4096,
+      "throughput_ops_per_sec": 77360.37778608083
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "operations": 4096,
+      "p50_us": 14,
+      "p95_us": 1752,
+      "p99_us": 6334,
+      "path": "quorum_read_index",
+      "successful": 4096,
+      "throughput_ops_per_sec": 71580.84549700908
     }
   ],
   "repository_search_before_after": {

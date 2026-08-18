@@ -3,7 +3,11 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
-export PATH="/home/ubuntu/.cargo/bin:/tmp/helm-un1c0/linux-amd64:${PATH}"
+if [[ -x /home/ubuntu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo ]]; then
+  export PATH="/home/ubuntu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/home/ubuntu/.cargo/bin:/tmp/helm-un1c0/linux-amd64:${PATH}"
+else
+  export PATH="/home/ubuntu/.cargo/bin:/tmp/helm-un1c0/linux-amd64:${PATH}"
+fi
 OUTPUT=${SECURITY_COMPLIANCE_OUTPUT:-"$ROOT_DIR/benchmarks/security_compliance_metrics.json"}
 TMP_DIR=$(mktemp -d /tmp/un1c0-compliance.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -39,6 +43,8 @@ printf '%s\n' '== Phase 13 snapshot streaming and network stress =='
 cargo test --test phase13_snapshot_sync_integration >"$TMP_DIR/phase13-snapshot.log"
 cargo test --test phase13_transport_stress_integration >"$TMP_DIR/phase13-stress.log"
 cargo run --quiet --release --bin un1c0-consensus-bench > benchmarks/consensus_partition_metrics.json
+printf '%s\n' '== Phase 14 leader leases and linearizable reads =='
+scripts/validate_phase14_read_optimization.sh >"$TMP_DIR/phase14-reads.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

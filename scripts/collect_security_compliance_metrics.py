@@ -56,6 +56,7 @@ def main() -> None:
             }
         )
     partition_metrics = load_json(root / "benchmarks/consensus_partition_metrics.json")
+    phase14_reads = load_json(root / "benchmarks/phase14_read_benchmark.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -78,11 +79,14 @@ def main() -> None:
             "incremental_state_sync": "passed",
             "network_stress_packet_corruption": "passed",
             "authenticated_partition_benchmark": "passed",
+            "leader_lease_read_optimization": "passed",
+            "linearizable_read_consistency": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
         "repository_search_before_after": profile,
         "authenticated_consensus_partition": partition_metrics,
+        "phase14_read_optimization": phase14_reads,
         "security_notes": {
             "secret_material_recorded": False,
             "cluster_mutation_performed": False,
