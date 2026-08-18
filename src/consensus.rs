@@ -38,6 +38,8 @@ const MAX_SNAPSHOT_BANDWIDTH_BYTES: u64 = MAX_SNAPSHOT_BYTES;
 const MAX_SNAPSHOT_BANDWIDTH_WINDOW_TICKS: u64 = MAX_ELECTION_TICKS;
 const MAX_DURABLE_CONSENSUS_STATE_BYTES: u64 = 128 * 1024;
 const MAX_SOCKET_QUOTA_BYTES: u64 = 16 * MAX_FRAME_BYTES as u64;
+const MAX_DURABLE_SOCKET_QUEUE_ENTRIES: usize = 256;
+const MAX_DURABLE_SOCKET_QUEUE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -2122,6 +2124,293 @@ pub struct SocketTransportMetrics {
     pub rejected_frames: u64,
     pub backpressured_sends: u64,
     pub backpressured_receives: u64,
+    pub durable_queue_frames: u64,
+    pub durable_queue_bytes: u64,
+    pub next_queue_sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurableSocketQueueFrame {
+    pub peer_id: String,
+    pub sequence: u64,
+    pub frame_bytes: Vec<u8>,
+    pub frame_digest: String,
+}
+
+impl DurableSocketQueueFrame {
+    fn new(peer_id: &str, sequence: u64, frame_bytes: Vec<u8>) -> Result<Self, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if sequence == 0 || frame_bytes.is_empty() || frame_bytes.len() > MAX_FRAME_BYTES {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue frame is outside bounded limits".into(),
+            ));
+        }
+        let frame_digest = digest_bytes(&frame_bytes);
+        Ok(Self {
+            peer_id: peer_id.to_string(),
+            sequence,
+            frame_bytes,
+            frame_digest,
+        })
+    }
+
+    fn validate(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.peer_id)?;
+        if self.sequence == 0
+            || self.frame_bytes.is_empty()
+            || self.frame_bytes.len() > MAX_FRAME_BYTES
+        {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue frame is outside bounded limits".into(),
+            ));
+        }
+        validate_hex_digest(&self.frame_digest).map_err(|_| {
+            ConsensusError::SocketQuota("durable queue frame digest is invalid".into())
+        })?;
+        if digest_bytes(&self.frame_bytes) != self.frame_digest {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue frame digest mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurableSocketQueueState {
+    pub cluster_id: String,
+    pub node_id: String,
+    pub replay_epoch: u64,
+    pub quota_config: SocketQuotaConfig,
+    pub peer_quotas: BTreeMap<String, SocketPeerQuota>,
+    pub next_queue_sequences: BTreeMap<String, u64>,
+    pub queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+    pub state_hash: String,
+}
+
+impl DurableSocketQueueState {
+    pub fn new(
+        cluster_id: &str,
+        node_id: &str,
+        replay_epoch: u64,
+        quota_config: SocketQuotaConfig,
+        peer_quotas: BTreeMap<String, SocketPeerQuota>,
+        next_queue_sequences: BTreeMap<String, u64>,
+        queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+    ) -> Result<Self, ConsensusError> {
+        let mut state = Self {
+            cluster_id: cluster_id.to_string(),
+            node_id: node_id.to_string(),
+            replay_epoch,
+            quota_config,
+            peer_quotas,
+            next_queue_sequences,
+            queued_frames,
+            state_hash: String::new(),
+        };
+        state.validate_identity()?;
+        state.state_hash = state.content_hash()?;
+        Ok(state)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_cluster_id(&self.cluster_id)?;
+        validate_node_id(&self.node_id)?;
+        if self.replay_epoch == 0 {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue replay epoch must be positive".into(),
+            ));
+        }
+        self.quota_config.validate()?;
+        if self.peer_quotas.len() > MAX_MEMBERS
+            || self.next_queue_sequences.len() > MAX_MEMBERS
+            || self.queued_frames.len() > MAX_MEMBERS
+        {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue peer count exceeds the member bound".into(),
+            ));
+        }
+        let peer_ids: BTreeSet<String> = self.peer_quotas.keys().cloned().collect();
+        if peer_ids != self.next_queue_sequences.keys().cloned().collect()
+            || peer_ids != self.queued_frames.keys().cloned().collect()
+        {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue peer maps are not identical".into(),
+            ));
+        }
+        let mut total_bytes = 0u64;
+        for peer_id in &peer_ids {
+            validate_node_id(peer_id)?;
+            let quota = self.peer_quotas.get(peer_id).ok_or_else(|| {
+                ConsensusError::SocketQuota("durable queue peer quota is missing".into())
+            })?;
+            if quota.peer_id != *peer_id
+                || quota.in_flight_bytes > self.quota_config.max_in_flight_bytes_per_peer
+                || quota.receive_window_bytes > self.quota_config.max_receive_bytes_per_window
+            {
+                return Err(ConsensusError::SocketQuota(
+                    "durable queue peer quota is inconsistent".into(),
+                ));
+            }
+            let next_sequence = *self.next_queue_sequences.get(peer_id).ok_or_else(|| {
+                ConsensusError::SocketQuota("durable queue sequence is missing".into())
+            })?;
+            if next_sequence == 0 {
+                return Err(ConsensusError::SocketQuota(
+                    "durable queue sequence must be positive".into(),
+                ));
+            }
+            let frames = self.queued_frames.get(peer_id).ok_or_else(|| {
+                ConsensusError::SocketQuota("durable queue frames are missing".into())
+            })?;
+            if frames.len() > MAX_DURABLE_SOCKET_QUEUE_ENTRIES {
+                return Err(ConsensusError::SocketQuota(
+                    "durable queue entry count exceeds the bound".into(),
+                ));
+            }
+            let mut previous_sequence = 0u64;
+            let mut peer_bytes = 0u64;
+            for frame in frames {
+                frame.validate()?;
+                if frame.peer_id != *peer_id || frame.sequence <= previous_sequence {
+                    return Err(ConsensusError::SocketQuota(
+                        "durable queue frame ordering or peer binding is invalid".into(),
+                    ));
+                }
+                if frame.sequence >= next_sequence {
+                    return Err(ConsensusError::SocketQuota(
+                        "durable queue sequence exceeds the next sequence".into(),
+                    ));
+                }
+                previous_sequence = frame.sequence;
+                peer_bytes = peer_bytes
+                    .checked_add(frame.frame_bytes.len() as u64)
+                    .ok_or_else(|| {
+                        ConsensusError::SocketQuota("durable queue byte overflow".into())
+                    })?;
+            }
+            if peer_bytes != quota.in_flight_bytes {
+                return Err(ConsensusError::SocketQuota(
+                    "durable queue bytes do not match in-flight quota".into(),
+                ));
+            }
+            total_bytes = total_bytes
+                .checked_add(peer_bytes)
+                .ok_or_else(|| ConsensusError::SocketQuota("durable queue byte overflow".into()))?;
+        }
+        if total_bytes > MAX_DURABLE_SOCKET_QUEUE_BYTES {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue exceeds the global byte bound".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.cluster_id,
+            &self.node_id,
+            self.replay_epoch,
+            &self.quota_config,
+            &self.peer_quotas,
+            &self.next_queue_sequences,
+            &self.queued_frames,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.state_hash).map_err(|_| {
+            ConsensusError::SocketQuota("durable queue state hash is invalid".into())
+        })?;
+        if self.content_hash()? != self.state_hash {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue state hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableSocketQueueStore {
+    path: PathBuf,
+}
+
+impl DurableSocketQueueStore {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
+
+    fn staging_path(&self) -> PathBuf {
+        self.path.with_extension("queue.tmp")
+    }
+
+    pub fn save(&self, state: &DurableSocketQueueState) -> Result<(), ConsensusError> {
+        state.validate()?;
+        let bytes = serde_json::to_vec(state)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if bytes.len() as u64 > MAX_DURABLE_SOCKET_QUEUE_BYTES {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue state exceeds the byte bound".into(),
+            ));
+        }
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| ConsensusError::SocketQuota(error.to_string()))?;
+        let temporary = self.staging_path();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| ConsensusError::SocketQuota(error.to_string()))?;
+        let result = file
+            .write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .and_then(|_| fs::rename(&temporary, &self.path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result.map_err(|error| ConsensusError::SocketQuota(error.to_string()))?;
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
+    pub fn recover_staging(&self) -> Result<bool, ConsensusError> {
+        let temporary = self.staging_path();
+        if !temporary.exists() {
+            return Ok(false);
+        }
+        fs::remove_file(&temporary)
+            .map_err(|error| ConsensusError::SocketQuota(error.to_string()))?;
+        if let Some(parent) = self.path.parent() {
+            if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+                let _ = directory.sync_all();
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn load(&self) -> Result<DurableSocketQueueState, ConsensusError> {
+        let metadata = fs::metadata(&self.path)
+            .map_err(|error| ConsensusError::SocketQuota(error.to_string()))?;
+        if metadata.len() > MAX_DURABLE_SOCKET_QUEUE_BYTES {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue state exceeds the byte bound".into(),
+            ));
+        }
+        let state: DurableSocketQueueState = serde_json::from_slice(
+            &fs::read(&self.path)
+                .map_err(|error| ConsensusError::SocketQuota(error.to_string()))?,
+        )
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        state.validate()?;
+        Ok(state)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2135,6 +2424,8 @@ pub struct AuthenticatedSocketTransport {
     replay_window_entries: usize,
     quota_config: SocketQuotaConfig,
     peer_quotas: BTreeMap<String, SocketPeerQuota>,
+    next_queue_sequences: BTreeMap<String, u64>,
+    durable_queues: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
     max_frame_bytes: usize,
 }
 
@@ -2214,6 +2505,14 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), SocketPeerQuota::new(peer_id)))
             .collect();
+        let next_queue_sequences = trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), 1u64))
+            .collect();
+        let durable_queues = trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), Vec::new()))
+            .collect();
         Ok(Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2224,6 +2523,8 @@ impl AuthenticatedSocketTransport {
             replay_window_entries,
             quota_config,
             peer_quotas,
+            next_queue_sequences,
+            durable_queues,
             max_frame_bytes: MAX_FRAME_BYTES,
         })
     }
@@ -2280,6 +2581,16 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), SocketPeerQuota::new(peer_id)))
             .collect();
+        self.next_queue_sequences = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), 1u64))
+            .collect();
+        self.durable_queues = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), Vec::new()))
+            .collect();
         Ok(())
     }
 
@@ -2292,6 +2603,14 @@ impl AuthenticatedSocketTransport {
         quota_config: SocketQuotaConfig,
     ) -> Result<(), ConsensusError> {
         quota_config.validate()?;
+        if self.peer_quotas.values().any(|quota| {
+            quota.in_flight_bytes > quota_config.max_in_flight_bytes_per_peer
+                || quota.receive_window_bytes > quota_config.max_receive_bytes_per_window
+        }) {
+            return Err(ConsensusError::SocketQuota(
+                "new socket quota would invalidate active peer state".into(),
+            ));
+        }
         self.quota_config = quota_config;
         Ok(())
     }
@@ -2305,6 +2624,14 @@ impl AuthenticatedSocketTransport {
             .peer_quotas
             .get(peer_id)
             .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        let queued_frames = self
+            .durable_queues
+            .get(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        let durable_queue_bytes = queued_frames
+            .iter()
+            .map(|frame| frame.frame_bytes.len() as u64)
+            .sum();
         Ok(SocketTransportMetrics {
             peer_id: peer_id.to_string(),
             in_flight_bytes: quota.in_flight_bytes,
@@ -2317,6 +2644,12 @@ impl AuthenticatedSocketTransport {
             rejected_frames: quota.rejected_frames,
             backpressured_sends: quota.backpressured_sends,
             backpressured_receives: quota.backpressured_receives,
+            durable_queue_frames: queued_frames.len() as u64,
+            durable_queue_bytes,
+            next_queue_sequence: *self
+                .next_queue_sequences
+                .get(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?,
         })
     }
 
@@ -2428,6 +2761,251 @@ impl AuthenticatedSocketTransport {
             frame_bytes,
             available_bytes: available.saturating_sub(frame_bytes),
         })
+    }
+
+    pub fn durable_queue_state(&self) -> Result<DurableSocketQueueState, ConsensusError> {
+        DurableSocketQueueState::new(
+            &self.cluster_id,
+            &self.node_id,
+            self.replay_epoch,
+            self.quota_config,
+            self.peer_quotas.clone(),
+            self.next_queue_sequences.clone(),
+            self.durable_queues.clone(),
+        )
+    }
+
+    pub fn persist_durable_queue(
+        &self,
+        store: &DurableSocketQueueStore,
+    ) -> Result<(), ConsensusError> {
+        let state = self.durable_queue_state()?;
+        store.save(&state)
+    }
+
+    pub fn restore_durable_queue(
+        &mut self,
+        state: DurableSocketQueueState,
+    ) -> Result<(), ConsensusError> {
+        state.validate()?;
+        if state.cluster_id != self.cluster_id || state.node_id != self.node_id {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue identity does not match transport".into(),
+            ));
+        }
+        if state.replay_epoch != self.replay_epoch {
+            return Err(ConsensusError::ReplayEpochMismatch {
+                expected: self.replay_epoch,
+                received: state.replay_epoch,
+            });
+        }
+        let trusted_peers: BTreeSet<String> = self.trusted_keys.keys().cloned().collect();
+        if trusted_peers != state.peer_quotas.keys().cloned().collect()
+            || trusted_peers != state.next_queue_sequences.keys().cloned().collect()
+            || trusted_peers != state.queued_frames.keys().cloned().collect()
+        {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue membership does not match transport".into(),
+            ));
+        }
+        self.set_socket_quota_config(state.quota_config)?;
+        self.peer_quotas = state.peer_quotas;
+        self.next_queue_sequences = state.next_queue_sequences;
+        self.durable_queues = state.queued_frames;
+        Ok(())
+    }
+
+    pub fn restore_durable_queue_from_store(
+        &mut self,
+        store: &DurableSocketQueueStore,
+    ) -> Result<(), ConsensusError> {
+        let state = store.load()?;
+        self.restore_durable_queue(state)
+    }
+
+    fn durable_queue_bytes(&self) -> Result<u64, ConsensusError> {
+        self.durable_queues
+            .values()
+            .flat_map(|frames| frames.iter())
+            .try_fold(0u64, |total, frame| {
+                total
+                    .checked_add(frame.frame_bytes.len() as u64)
+                    .ok_or_else(|| {
+                        ConsensusError::SocketQuota("durable queue byte overflow".into())
+                    })
+            })
+    }
+
+    pub fn durable_queue_frame(
+        &self,
+        peer_id: &str,
+    ) -> Result<Option<DurableSocketQueueFrame>, ConsensusError> {
+        validate_node_id(peer_id)?;
+        let frames = self
+            .durable_queues
+            .get(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        Ok(frames.first().cloned())
+    }
+
+    pub fn enqueue_durable_frame_with_backpressure(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        peer_id: &str,
+        envelope: &AuthenticatedConsensusEnvelope,
+        now_tick: u64,
+    ) -> Result<SocketBackpressureAction, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if !self.trusted_keys.contains_key(peer_id) {
+            return Err(ConsensusError::UnknownMember(peer_id.to_string()));
+        }
+        if envelope.sender_id != self.node_id {
+            return Err(ConsensusError::Unauthenticated(
+                "transport cannot enqueue on behalf of another node".into(),
+            ));
+        }
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &envelope.sender_id,
+            self.trusted_keys
+                .get(&envelope.sender_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        let frame_bytes = serde_json::to_vec(envelope)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if frame_bytes.len() > self.max_frame_bytes {
+            return Err(ConsensusError::FrameTooLarge);
+        }
+        let frame_len = frame_bytes.len() as u64;
+        let queue_bytes = self.durable_queue_bytes()?;
+        if queue_bytes
+            .checked_add(frame_len)
+            .ok_or_else(|| ConsensusError::SocketQuota("durable queue byte overflow".into()))?
+            > MAX_DURABLE_SOCKET_QUEUE_BYTES
+        {
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.backpressured_sends = quota.backpressured_sends.saturating_add(1);
+            let retry_at_tick = now_tick
+                .checked_add(self.quota_config.retry_backoff_ticks)
+                .ok_or_else(|| ConsensusError::SocketQuota("queue retry tick overflow".into()))?;
+            return Ok(SocketBackpressureAction::Backpressured {
+                retry_at_tick,
+                available_bytes: MAX_DURABLE_SOCKET_QUEUE_BYTES.saturating_sub(queue_bytes),
+            });
+        }
+        let admission = self.admit_send(peer_id, frame_len, now_tick)?;
+        if matches!(admission, SocketBackpressureAction::Backpressured { .. }) {
+            return Ok(admission);
+        }
+        let sequence = *self
+            .next_queue_sequences
+            .get(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        let frame = DurableSocketQueueFrame::new(peer_id, sequence, frame_bytes)?;
+        let frames = self
+            .durable_queues
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        if frames.len() >= MAX_DURABLE_SOCKET_QUEUE_ENTRIES {
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.in_flight_bytes = quota.in_flight_bytes.saturating_sub(frame_len);
+            quota.admitted_frames = quota.admitted_frames.saturating_sub(1);
+            quota.backpressured_sends = quota.backpressured_sends.saturating_add(1);
+            let retry_at_tick = now_tick
+                .checked_add(self.quota_config.retry_backoff_ticks)
+                .ok_or_else(|| ConsensusError::SocketQuota("queue retry tick overflow".into()))?;
+            return Ok(SocketBackpressureAction::Backpressured {
+                retry_at_tick,
+                available_bytes: 0,
+            });
+        }
+        frames.push(frame);
+        *self
+            .next_queue_sequences
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))? = sequence
+            .checked_add(1)
+            .ok_or_else(|| ConsensusError::SocketQuota("queue sequence overflow".into()))?;
+        if let Err(error) = self.persist_durable_queue(store) {
+            let frames = self
+                .durable_queues
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            let _ = frames.pop();
+            *self
+                .next_queue_sequences
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))? = sequence;
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.in_flight_bytes = quota.in_flight_bytes.saturating_sub(frame_len);
+            quota.admitted_frames = quota.admitted_frames.saturating_sub(1);
+            return Err(error);
+        }
+        Ok(admission)
+    }
+
+    pub fn acknowledge_durable_frame(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        peer_id: &str,
+        sequence: u64,
+    ) -> Result<(), ConsensusError> {
+        validate_node_id(peer_id)?;
+        if sequence == 0 {
+            return Err(ConsensusError::SocketQuota(
+                "queue sequence must be positive".into(),
+            ));
+        }
+        let frames = self
+            .durable_queues
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        let position = frames
+            .iter()
+            .position(|frame| frame.sequence == sequence)
+            .ok_or_else(|| ConsensusError::SocketQuota("queue frame is not present".into()))?;
+        if position != 0 {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue acknowledgements must be FIFO".into(),
+            ));
+        }
+        let frame = frames.remove(position);
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        quota.in_flight_bytes = quota
+            .in_flight_bytes
+            .checked_sub(frame.frame_bytes.len() as u64)
+            .ok_or_else(|| ConsensusError::SocketQuota("queue quota underflow".into()))?;
+        if let Err(error) = self.persist_durable_queue(store) {
+            let frames = self
+                .durable_queues
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            frames.insert(position, frame.clone());
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.in_flight_bytes = quota
+                .in_flight_bytes
+                .checked_add(frame.frame_bytes.len() as u64)
+                .ok_or_else(|| ConsensusError::SocketQuota("queue quota overflow".into()))?;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn replay_window_len(&self, sender_id: &str) -> Result<usize, ConsensusError> {

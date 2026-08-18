@@ -65,6 +65,8 @@ printf '%s\n' '== Phase 23 compaction coordination and snapshot requests =='
 scripts/validate_phase23_compaction_coordination.sh >"$TMP_DIR/phase23-compaction-coordination.log"
 printf '%s\n' '== Phase 24 socket backpressure and per-peer quotas =='
 scripts/validate_phase24_socket_backpressure.sh >"$TMP_DIR/phase24-socket-backpressure.log"
+printf '%s\n' '== Phase 25 durable transport queues and quota recovery =='
+scripts/validate_phase25_durable_transport_queue.sh >"$TMP_DIR/phase25-durable-transport-queue.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
