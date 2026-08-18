@@ -40,6 +40,8 @@ const MAX_DURABLE_CONSENSUS_STATE_BYTES: u64 = 128 * 1024;
 const MAX_SOCKET_QUOTA_BYTES: u64 = 16 * MAX_FRAME_BYTES as u64;
 const MAX_DURABLE_SOCKET_QUEUE_ENTRIES: usize = 256;
 const MAX_DURABLE_SOCKET_QUEUE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_REPLICATED_DELIVERY_ACKS: usize = MAX_MEMBERS;
+const MAX_DURABLE_REPLICATED_ACK_BYTES: u64 = 512 * 1024;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConsensusError {
@@ -133,6 +135,10 @@ pub enum ConsensusError {
     SnapshotRequest(String),
     #[error("socket quota violation: {0}")]
     SocketQuota(String),
+    #[error("replicated delivery acknowledgement violation: {0}")]
+    ReplicatedDeliveryAcknowledgement(String),
+    #[error("durable queue ownership violation: {0}")]
+    DurableQueueOwnership(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -539,6 +545,8 @@ pub enum ConsensusMessage {
     ReplicationBatch(ReplicationBatch),
     ReplicationBatchAck(ReplicationBatchAck),
     SnapshotInstallAck(SnapshotInstallAck),
+    ReplicatedDeliveryAcknowledgement(ReplicatedDeliveryAcknowledgement),
+    QueueOwnershipTransfer(QueueOwnershipTransfer),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2153,6 +2161,11 @@ pub enum SocketDeliveryCrashPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DurableSocketDeliveryAction {
     Idle,
+    WaitingForQuorum {
+        sequence: u64,
+        acknowledgements: usize,
+        required: usize,
+    },
     Delivered {
         sequence: u64,
         frame_bytes: u64,
@@ -2215,6 +2228,358 @@ impl DurableSocketQueueFrame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurableQueueOwnership {
+    pub peer_id: String,
+    pub owner_id: String,
+    pub owner_term: u64,
+    pub lease_expiry_tick: u64,
+    pub ownership_epoch: u64,
+    pub ownership_hash: String,
+}
+
+impl DurableQueueOwnership {
+    pub fn new(
+        peer_id: &str,
+        owner_id: &str,
+        owner_term: u64,
+        lease_expiry_tick: u64,
+        ownership_epoch: u64,
+    ) -> Result<Self, ConsensusError> {
+        let mut ownership = Self {
+            peer_id: peer_id.to_string(),
+            owner_id: owner_id.to_string(),
+            owner_term,
+            lease_expiry_tick,
+            ownership_epoch,
+            ownership_hash: String::new(),
+        };
+        ownership.validate_identity()?;
+        ownership.ownership_hash = ownership.content_hash()?;
+        Ok(ownership)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.peer_id)?;
+        validate_node_id(&self.owner_id)?;
+        if self.owner_term == 0 || self.ownership_epoch == 0 {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "owner term and ownership epoch must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.peer_id,
+            &self.owner_id,
+            self.owner_term,
+            self.lease_expiry_tick,
+            self.ownership_epoch,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.ownership_hash).map_err(|_| {
+            ConsensusError::DurableQueueOwnership("ownership hash is invalid".into())
+        })?;
+        if self.content_hash()? != self.ownership_hash {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplicatedDeliveryAcknowledgement {
+    pub peer_id: String,
+    pub sequence: u64,
+    pub frame_digest: String,
+    pub owner_id: String,
+    pub acknowledgement_sender_id: String,
+    pub acknowledgement_term: u64,
+    pub ownership_epoch: u64,
+    pub acknowledgement_tick: u64,
+    pub acknowledgement_hash: String,
+}
+
+impl ReplicatedDeliveryAcknowledgement {
+    pub fn new(
+        peer_id: &str,
+        sequence: u64,
+        frame_digest: &str,
+        owner_id: &str,
+        acknowledgement_sender_id: &str,
+        acknowledgement_term: u64,
+        ownership_epoch: u64,
+        acknowledgement_tick: u64,
+    ) -> Result<Self, ConsensusError> {
+        let mut acknowledgement = Self {
+            peer_id: peer_id.to_string(),
+            sequence,
+            frame_digest: frame_digest.to_string(),
+            owner_id: owner_id.to_string(),
+            acknowledgement_sender_id: acknowledgement_sender_id.to_string(),
+            acknowledgement_term,
+            ownership_epoch,
+            acknowledgement_tick,
+            acknowledgement_hash: String::new(),
+        };
+        acknowledgement.validate_identity()?;
+        acknowledgement.acknowledgement_hash = acknowledgement.content_hash()?;
+        Ok(acknowledgement)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.peer_id)?;
+        validate_node_id(&self.owner_id)?;
+        validate_node_id(&self.acknowledgement_sender_id)?;
+        if self.sequence == 0 || self.acknowledgement_term == 0 || self.ownership_epoch == 0 {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement sequence, term, and epoch must be positive".into(),
+            ));
+        }
+        validate_hex_digest(&self.frame_digest).map_err(|_| {
+            ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement frame digest is invalid".into(),
+            )
+        })?;
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.peer_id,
+            self.sequence,
+            &self.frame_digest,
+            &self.owner_id,
+            &self.acknowledgement_sender_id,
+            self.acknowledgement_term,
+            self.ownership_epoch,
+            self.acknowledgement_tick,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.acknowledgement_hash).map_err(|_| {
+            ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement hash is invalid".into(),
+            )
+        })?;
+        if self.content_hash()? != self.acknowledgement_hash {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplicatedDeliveryAction {
+    WaitingForQuorum {
+        sequence: u64,
+        acknowledgements: usize,
+        required: usize,
+    },
+    Committed {
+        sequence: u64,
+    },
+    OwnershipTransferred {
+        owner_id: String,
+        ownership_epoch: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthenticatedDeliveryAcknowledgement {
+    pub cluster_id: String,
+    pub sender_id: String,
+    pub term: u64,
+    pub replay_epoch: u64,
+    pub acknowledgement: ReplicatedDeliveryAcknowledgement,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+impl AuthenticatedDeliveryAcknowledgement {
+    pub fn sign(
+        cluster_id: &str,
+        sender_id: &str,
+        replay_epoch: u64,
+        acknowledgement: ReplicatedDeliveryAcknowledgement,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ConsensusError> {
+        validate_cluster_id(cluster_id)?;
+        validate_node_id(sender_id)?;
+        acknowledgement.validate()?;
+        if acknowledgement.acknowledgement_sender_id != sender_id {
+            return Err(ConsensusError::Unauthenticated(
+                "acknowledgement sender does not match envelope sender".into(),
+            ));
+        }
+        let term = acknowledgement.acknowledgement_term;
+        if replay_epoch == 0 {
+            return Err(ConsensusError::Unauthenticated(
+                "replay epoch must be positive".into(),
+            ));
+        }
+        let public_key = signing_key.verifying_key().to_bytes().to_vec();
+        let mut envelope = Self {
+            cluster_id: cluster_id.to_string(),
+            sender_id: sender_id.to_string(),
+            term,
+            replay_epoch,
+            acknowledgement,
+            public_key,
+            signature: Vec::new(),
+        };
+        envelope.signature = signing_key.sign(&envelope.payload()?).to_bytes().to_vec();
+        Ok(envelope)
+    }
+
+    pub fn verify(
+        &self,
+        expected_cluster_id: &str,
+        trusted_key: &[u8],
+        expected_replay_epoch: u64,
+        min_term: u64,
+    ) -> Result<(), ConsensusError> {
+        validate_cluster_id(expected_cluster_id)?;
+        validate_node_id(&self.sender_id)?;
+        self.acknowledgement.validate()?;
+        if self.cluster_id != expected_cluster_id
+            || self.acknowledgement.acknowledgement_sender_id != self.sender_id
+            || self.term != self.acknowledgement.acknowledgement_term
+        {
+            return Err(ConsensusError::Unauthenticated(
+                "acknowledgement envelope binding mismatch".into(),
+            ));
+        }
+        if self.replay_epoch != expected_replay_epoch {
+            return Err(ConsensusError::ReplayEpochMismatch {
+                expected: expected_replay_epoch,
+                received: self.replay_epoch,
+            });
+        }
+        if self.term < min_term {
+            return Err(ConsensusError::StaleReplayTerm);
+        }
+        if trusted_key != self.public_key.as_slice() {
+            return Err(ConsensusError::Unauthenticated(
+                "acknowledgement key is not bound to trusted identity".into(),
+            ));
+        }
+        let key: [u8; 32] =
+            self.public_key.as_slice().try_into().map_err(|_| {
+                ConsensusError::Unauthenticated("public key must be 32 bytes".into())
+            })?;
+        let signature: [u8; 64] =
+            self.signature.as_slice().try_into().map_err(|_| {
+                ConsensusError::Unauthenticated("signature must be 64 bytes".into())
+            })?;
+        VerifyingKey::from_bytes(&key)
+            .map_err(|_| ConsensusError::Unauthenticated("invalid public key".into()))?
+            .verify(&self.payload()?, &Signature::from_bytes(&signature))
+            .map_err(|_| {
+                ConsensusError::Unauthenticated("invalid acknowledgement signature".into())
+            })
+    }
+
+    fn payload(&self) -> Result<Vec<u8>, ConsensusError> {
+        serde_json::to_vec(&(
+            &self.cluster_id,
+            &self.sender_id,
+            self.term,
+            self.replay_epoch,
+            &self.acknowledgement,
+            &self.public_key,
+        ))
+        .map_err(|error| ConsensusError::Serialization(error.to_string()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QueueOwnershipTransfer {
+    pub peer_id: String,
+    pub previous_owner_id: String,
+    pub new_owner_id: String,
+    pub owner_term: u64,
+    pub lease_expiry_tick: u64,
+    pub ownership_epoch: u64,
+    pub transfer_hash: String,
+}
+
+impl QueueOwnershipTransfer {
+    pub fn new(
+        peer_id: &str,
+        previous_owner_id: &str,
+        new_owner_id: &str,
+        owner_term: u64,
+        lease_expiry_tick: u64,
+        ownership_epoch: u64,
+    ) -> Result<Self, ConsensusError> {
+        let mut transfer = Self {
+            peer_id: peer_id.to_string(),
+            previous_owner_id: previous_owner_id.to_string(),
+            new_owner_id: new_owner_id.to_string(),
+            owner_term,
+            lease_expiry_tick,
+            ownership_epoch,
+            transfer_hash: String::new(),
+        };
+        transfer.validate_identity()?;
+        transfer.transfer_hash = transfer.content_hash()?;
+        Ok(transfer)
+    }
+
+    fn validate_identity(&self) -> Result<(), ConsensusError> {
+        validate_node_id(&self.peer_id)?;
+        validate_node_id(&self.previous_owner_id)?;
+        validate_node_id(&self.new_owner_id)?;
+        if self.owner_term == 0 || self.ownership_epoch == 0 {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership transfer term and epoch must be positive".into(),
+            ));
+        }
+        if self.previous_owner_id == self.new_owner_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership transfer must change the owner".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn content_hash(&self) -> Result<String, ConsensusError> {
+        digest_json(&(
+            &self.peer_id,
+            &self.previous_owner_id,
+            &self.new_owner_id,
+            self.owner_term,
+            self.lease_expiry_tick,
+            self.ownership_epoch,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), ConsensusError> {
+        self.validate_identity()?;
+        validate_hex_digest(&self.transfer_hash).map_err(|_| {
+            ConsensusError::DurableQueueOwnership("transfer hash is invalid".into())
+        })?;
+        if self.content_hash()? != self.transfer_hash {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "transfer hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DurableSocketQueueState {
     pub cluster_id: String,
     pub node_id: String,
@@ -2223,7 +2588,18 @@ pub struct DurableSocketQueueState {
     pub peer_quotas: BTreeMap<String, SocketPeerQuota>,
     pub next_queue_sequences: BTreeMap<String, u64>,
     pub queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+    #[serde(default)]
+    pub ownership: BTreeMap<String, DurableQueueOwnership>,
+    #[serde(default)]
+    pub replicated_acknowledgements:
+        BTreeMap<String, BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>>,
+    #[serde(default = "default_ack_quorum_size")]
+    pub ack_quorum_size: usize,
     pub state_hash: String,
+}
+
+fn default_ack_quorum_size() -> usize {
+    1
 }
 
 impl DurableSocketQueueState {
@@ -2236,6 +2612,46 @@ impl DurableSocketQueueState {
         next_queue_sequences: BTreeMap<String, u64>,
         queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
     ) -> Result<Self, ConsensusError> {
+        let ownership = peer_quotas
+            .keys()
+            .map(|peer_id| {
+                DurableQueueOwnership::new(peer_id, node_id, 1, u64::MAX, replay_epoch)
+                    .map(|value| (peer_id.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let replicated_acknowledgements = peer_quotas
+            .keys()
+            .map(|peer_id| (peer_id.clone(), BTreeMap::new()))
+            .collect();
+        Self::new_with_replication(
+            cluster_id,
+            node_id,
+            replay_epoch,
+            quota_config,
+            peer_quotas,
+            next_queue_sequences,
+            queued_frames,
+            ownership,
+            replicated_acknowledgements,
+            default_ack_quorum_size(),
+        )
+    }
+
+    pub fn new_with_replication(
+        cluster_id: &str,
+        node_id: &str,
+        replay_epoch: u64,
+        quota_config: SocketQuotaConfig,
+        peer_quotas: BTreeMap<String, SocketPeerQuota>,
+        next_queue_sequences: BTreeMap<String, u64>,
+        queued_frames: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+        ownership: BTreeMap<String, DurableQueueOwnership>,
+        replicated_acknowledgements: BTreeMap<
+            String,
+            BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>,
+        >,
+        ack_quorum_size: usize,
+    ) -> Result<Self, ConsensusError> {
         let mut state = Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2244,6 +2660,9 @@ impl DurableSocketQueueState {
             peer_quotas,
             next_queue_sequences,
             queued_frames,
+            ownership,
+            replicated_acknowledgements,
+            ack_quorum_size,
             state_hash: String::new(),
         };
         state.validate_identity()?;
@@ -2271,9 +2690,23 @@ impl DurableSocketQueueState {
         let peer_ids: BTreeSet<String> = self.peer_quotas.keys().cloned().collect();
         if peer_ids != self.next_queue_sequences.keys().cloned().collect()
             || peer_ids != self.queued_frames.keys().cloned().collect()
+            || peer_ids != self.ownership.keys().cloned().collect()
+            || peer_ids != self.replicated_acknowledgements.keys().cloned().collect()
         {
             return Err(ConsensusError::SocketQuota(
                 "durable queue peer maps are not identical".into(),
+            ));
+        }
+        if self.ack_quorum_size == 0 || self.ack_quorum_size > peer_ids.len() {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "ack quorum must be within the accepted peer set".into(),
+            ));
+        }
+        let acknowledgement_bytes = serde_json::to_vec(&self.replicated_acknowledgements)
+            .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        if acknowledgement_bytes.len() as u64 > MAX_DURABLE_REPLICATED_ACK_BYTES {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "replicated acknowledgement state exceeds the byte bound".into(),
             ));
         }
         let mut total_bytes = 0u64;
@@ -2301,6 +2734,52 @@ impl DurableSocketQueueState {
             let frames = self.queued_frames.get(peer_id).ok_or_else(|| {
                 ConsensusError::SocketQuota("durable queue frames are missing".into())
             })?;
+            let ownership = self.ownership.get(peer_id).ok_or_else(|| {
+                ConsensusError::DurableQueueOwnership("queue ownership is missing".into())
+            })?;
+            ownership.validate()?;
+            if ownership.peer_id != *peer_id || !peer_ids.contains(&ownership.owner_id) {
+                return Err(ConsensusError::DurableQueueOwnership(
+                    "queue ownership is not bound to an accepted member".into(),
+                ));
+            }
+            let acknowledgements =
+                self.replicated_acknowledgements
+                    .get(peer_id)
+                    .ok_or_else(|| {
+                        ConsensusError::ReplicatedDeliveryAcknowledgement(
+                            "replicated acknowledgement map is missing".into(),
+                        )
+                    })?;
+            if acknowledgements.len() > MAX_REPLICATED_DELIVERY_ACKS {
+                return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                    "replicated acknowledgement count exceeds the bound".into(),
+                ));
+            }
+            for (sequence, acknowledgements_by_sender) in acknowledgements {
+                if acknowledgements_by_sender.len() > peer_ids.len() {
+                    return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                        "acknowledgement sender count exceeds the member bound".into(),
+                    ));
+                }
+                for (sender_id, acknowledgement) in acknowledgements_by_sender {
+                    acknowledgement.validate()?;
+                    if sender_id != &acknowledgement.acknowledgement_sender_id
+                        || *sequence != acknowledgement.sequence
+                        || acknowledgement.peer_id != *peer_id
+                        || acknowledgement.owner_id != ownership.owner_id
+                        || acknowledgement.ownership_epoch != ownership.ownership_epoch
+                        || !frames.iter().any(|frame| {
+                            frame.sequence == *sequence
+                                && frame.frame_digest == acknowledgement.frame_digest
+                        })
+                    {
+                        return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                            "acknowledgement is not bound to the owned queued frame".into(),
+                        ));
+                    }
+                }
+            }
             if frames.len() > MAX_DURABLE_SOCKET_QUEUE_ENTRIES {
                 return Err(ConsensusError::SocketQuota(
                     "durable queue entry count exceeds the bound".into(),
@@ -2353,6 +2832,9 @@ impl DurableSocketQueueState {
             &self.peer_quotas,
             &self.next_queue_sequences,
             &self.queued_frames,
+            &self.ownership,
+            &self.replicated_acknowledgements,
+            self.ack_quorum_size,
         ))
     }
 
@@ -2464,6 +2946,11 @@ pub struct AuthenticatedSocketTransport {
     peer_quotas: BTreeMap<String, SocketPeerQuota>,
     next_queue_sequences: BTreeMap<String, u64>,
     durable_queues: BTreeMap<String, Vec<DurableSocketQueueFrame>>,
+    ownership: BTreeMap<String, DurableQueueOwnership>,
+    replicated_acknowledgements:
+        BTreeMap<String, BTreeMap<u64, BTreeMap<String, ReplicatedDeliveryAcknowledgement>>>,
+    ack_quorum_size: usize,
+    local_delivery_signing_key: Option<SigningKey>,
     active_deliveries: BTreeMap<String, Option<u64>>,
     max_frame_bytes: usize,
 }
@@ -2556,6 +3043,23 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), None))
             .collect();
+        let ownership = trusted_keys
+            .keys()
+            .map(|peer_id| {
+                DurableQueueOwnership::new(
+                    peer_id,
+                    node_id,
+                    replay_term_floor,
+                    u64::MAX,
+                    replay_epoch,
+                )
+                .map(|value| (peer_id.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let replicated_acknowledgements = trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), BTreeMap::new()))
+            .collect();
         Ok(Self {
             cluster_id: cluster_id.to_string(),
             node_id: node_id.to_string(),
@@ -2568,6 +3072,10 @@ impl AuthenticatedSocketTransport {
             peer_quotas,
             next_queue_sequences,
             durable_queues,
+            ownership,
+            replicated_acknowledgements,
+            ack_quorum_size: default_ack_quorum_size(),
+            local_delivery_signing_key: None,
             active_deliveries,
             max_frame_bytes: MAX_FRAME_BYTES,
         })
@@ -2635,6 +3143,26 @@ impl AuthenticatedSocketTransport {
             .keys()
             .map(|peer_id| (peer_id.clone(), Vec::new()))
             .collect();
+        self.ownership = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| {
+                DurableQueueOwnership::new(
+                    peer_id,
+                    &self.node_id,
+                    replay_term_floor,
+                    u64::MAX,
+                    replay_epoch,
+                )
+                .map(|value| (peer_id.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        self.replicated_acknowledgements = self
+            .trusted_keys
+            .keys()
+            .map(|peer_id| (peer_id.clone(), BTreeMap::new()))
+            .collect();
+        self.ack_quorum_size = default_ack_quorum_size();
         self.active_deliveries = self
             .trusted_keys
             .keys()
@@ -2645,6 +3173,51 @@ impl AuthenticatedSocketTransport {
 
     pub fn socket_quota_config(&self) -> SocketQuotaConfig {
         self.quota_config
+    }
+
+    pub fn set_ack_quorum_size(&mut self, ack_quorum_size: usize) -> Result<(), ConsensusError> {
+        if ack_quorum_size == 0 || ack_quorum_size > self.trusted_keys.len() {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "ack quorum must be within the trusted member count".into(),
+            ));
+        }
+        self.ack_quorum_size = ack_quorum_size;
+        Ok(())
+    }
+
+    pub fn ack_quorum_size(&self) -> usize {
+        self.ack_quorum_size
+    }
+
+    pub fn set_local_delivery_signing_key(&mut self, signing_key: SigningKey) {
+        self.local_delivery_signing_key = Some(signing_key);
+    }
+
+    pub fn queue_ownership(&self, peer_id: &str) -> Result<DurableQueueOwnership, ConsensusError> {
+        validate_node_id(peer_id)?;
+        self.ownership
+            .get(peer_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))
+    }
+
+    pub fn replicated_acknowledgement_count(
+        &self,
+        peer_id: &str,
+        sequence: u64,
+    ) -> Result<usize, ConsensusError> {
+        validate_node_id(peer_id)?;
+        if sequence == 0 {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement sequence must be positive".into(),
+            ));
+        }
+        Ok(self
+            .replicated_acknowledgements
+            .get(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+            .get(&sequence)
+            .map_or(0, BTreeMap::len))
     }
 
     pub fn set_socket_quota_config(
@@ -2822,7 +3395,7 @@ impl AuthenticatedSocketTransport {
     }
 
     pub fn durable_queue_state(&self) -> Result<DurableSocketQueueState, ConsensusError> {
-        DurableSocketQueueState::new(
+        DurableSocketQueueState::new_with_replication(
             &self.cluster_id,
             &self.node_id,
             self.replay_epoch,
@@ -2830,6 +3403,9 @@ impl AuthenticatedSocketTransport {
             self.peer_quotas.clone(),
             self.next_queue_sequences.clone(),
             self.durable_queues.clone(),
+            self.ownership.clone(),
+            self.replicated_acknowledgements.clone(),
+            self.ack_quorum_size,
         )
     }
 
@@ -2841,12 +3417,18 @@ impl AuthenticatedSocketTransport {
         store.save(&state)
     }
 
-    pub fn restore_durable_queue(
+    fn restore_queue_state(
         &mut self,
         state: DurableSocketQueueState,
+        require_local_identity: bool,
     ) -> Result<(), ConsensusError> {
         state.validate()?;
-        if state.cluster_id != self.cluster_id || state.node_id != self.node_id {
+        if state.cluster_id != self.cluster_id {
+            return Err(ConsensusError::SocketQuota(
+                "durable queue cluster identity does not match transport".into(),
+            ));
+        }
+        if require_local_identity && state.node_id != self.node_id {
             return Err(ConsensusError::SocketQuota(
                 "durable queue identity does not match transport".into(),
             ));
@@ -2870,6 +3452,9 @@ impl AuthenticatedSocketTransport {
         self.peer_quotas = state.peer_quotas;
         self.next_queue_sequences = state.next_queue_sequences;
         self.durable_queues = state.queued_frames;
+        self.ownership = state.ownership;
+        self.replicated_acknowledgements = state.replicated_acknowledgements;
+        self.ack_quorum_size = state.ack_quorum_size;
         self.active_deliveries = self
             .trusted_keys
             .keys()
@@ -2878,12 +3463,34 @@ impl AuthenticatedSocketTransport {
         Ok(())
     }
 
+    pub fn restore_durable_queue(
+        &mut self,
+        state: DurableSocketQueueState,
+    ) -> Result<(), ConsensusError> {
+        self.restore_queue_state(state, true)
+    }
+
     pub fn restore_durable_queue_from_store(
         &mut self,
         store: &DurableSocketQueueStore,
     ) -> Result<(), ConsensusError> {
         let state = store.load()?;
         self.restore_durable_queue(state)
+    }
+
+    pub fn restore_replicated_queue_from_store(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        source_node_id: &str,
+    ) -> Result<(), ConsensusError> {
+        validate_node_id(source_node_id)?;
+        let state = store.load()?;
+        if state.node_id != source_node_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "replicated queue source identity does not match persisted state".into(),
+            ));
+        }
+        self.restore_queue_state(state, false)
     }
 
     fn durable_queue_bytes(&self) -> Result<u64, ConsensusError> {
@@ -2909,6 +3516,233 @@ impl AuthenticatedSocketTransport {
             .get(peer_id)
             .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
         Ok(frames.first().cloned())
+    }
+
+    fn commit_replicated_frame(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        peer_id: &str,
+        sequence: u64,
+    ) -> Result<(), ConsensusError> {
+        let frames = self
+            .durable_queues
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        if frames.first().map(|frame| frame.sequence) != Some(sequence) {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "replicated commit must acknowledge the FIFO queue head".into(),
+            ));
+        }
+        let frame = frames.remove(0);
+        let acknowledgements = self
+            .replicated_acknowledgements
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+            .remove(&sequence);
+        let quota = self
+            .peer_quotas
+            .get_mut(peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+        quota.in_flight_bytes = quota
+            .in_flight_bytes
+            .checked_sub(frame.frame_bytes.len() as u64)
+            .ok_or_else(|| ConsensusError::SocketQuota("queue quota underflow".into()))?;
+        if let Err(error) = self.persist_durable_queue(store) {
+            let frames = self
+                .durable_queues
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            frames.insert(0, frame.clone());
+            let quota = self
+                .peer_quotas
+                .get_mut(peer_id)
+                .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?;
+            quota.in_flight_bytes = quota
+                .in_flight_bytes
+                .checked_add(frame.frame_bytes.len() as u64)
+                .ok_or_else(|| ConsensusError::SocketQuota("queue quota overflow".into()))?;
+            if let Some(acknowledgements) = acknowledgements {
+                self.replicated_acknowledgements
+                    .get_mut(peer_id)
+                    .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
+                    .insert(sequence, acknowledgements);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn record_authenticated_delivery_ack(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        envelope: AuthenticatedDeliveryAcknowledgement,
+    ) -> Result<ReplicatedDeliveryAction, ConsensusError> {
+        let trusted_key = self
+            .trusted_keys
+            .get(&envelope.sender_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
+        envelope.verify(
+            &self.cluster_id,
+            &trusted_key,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        let acknowledgement = envelope.acknowledgement.clone();
+        let peer_id = acknowledgement.peer_id.clone();
+        let ownership = self.queue_ownership(&peer_id)?;
+        if ownership.owner_id != self.node_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "only the current queue owner may commit replicated acknowledgements".into(),
+            ));
+        }
+        if acknowledgement.owner_id != ownership.owner_id
+            || acknowledgement.ownership_epoch != ownership.ownership_epoch
+        {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement owner or epoch does not match the active lease".into(),
+            ));
+        }
+        let frame = self.durable_queue_frame(&peer_id)?.ok_or_else(|| {
+            ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement has no retained queue frame".into(),
+            )
+        })?;
+        if frame.sequence != acknowledgement.sequence
+            || frame.frame_digest != acknowledgement.frame_digest
+        {
+            return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                "acknowledgement is not bound to the FIFO queue head".into(),
+            ));
+        }
+        let acknowledgement_map = self
+            .replicated_acknowledgements
+            .get_mut(&peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.clone()))?;
+        let sequence_map = acknowledgement_map
+            .entry(acknowledgement.sequence)
+            .or_default();
+        if let Some(existing) = sequence_map.get(&envelope.sender_id) {
+            if existing.acknowledgement_hash != acknowledgement.acknowledgement_hash {
+                return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                    "acknowledgement sender attempted a conflicting hash".into(),
+                ));
+            }
+        } else {
+            sequence_map.insert(envelope.sender_id.clone(), acknowledgement);
+            if let Err(error) = self.persist_durable_queue(store) {
+                self.replicated_acknowledgements
+                    .get_mut(&peer_id)
+                    .and_then(|values| values.get_mut(&frame.sequence))
+                    .and_then(|values| values.remove(&envelope.sender_id));
+                if self
+                    .replicated_acknowledgements
+                    .get(&peer_id)
+                    .and_then(|values| values.get(&frame.sequence))
+                    .is_some_and(BTreeMap::is_empty)
+                {
+                    self.replicated_acknowledgements
+                        .get_mut(&peer_id)
+                        .expect("peer map was checked")
+                        .remove(&frame.sequence);
+                }
+                return Err(error);
+            }
+        }
+        let acknowledgements = self
+            .replicated_acknowledgements
+            .get(&peer_id)
+            .and_then(|values| values.get(&frame.sequence))
+            .map_or(0, BTreeMap::len);
+        if acknowledgements < self.ack_quorum_size {
+            return Ok(ReplicatedDeliveryAction::WaitingForQuorum {
+                sequence: frame.sequence,
+                acknowledgements,
+                required: self.ack_quorum_size,
+            });
+        }
+        self.commit_replicated_frame(store, &peer_id, frame.sequence)?;
+        Ok(ReplicatedDeliveryAction::Committed {
+            sequence: frame.sequence,
+        })
+    }
+
+    pub fn apply_authenticated_queue_ownership_transfer(
+        &mut self,
+        store: &DurableSocketQueueStore,
+        envelope: &AuthenticatedConsensusEnvelope,
+        now_tick: u64,
+    ) -> Result<ReplicatedDeliveryAction, ConsensusError> {
+        let trusted_key = self
+            .trusted_keys
+            .get(&envelope.sender_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
+        envelope.verify_for_cluster_epoch(
+            &self.cluster_id,
+            &envelope.sender_id,
+            &trusted_key,
+            self.replay_epoch,
+            self.replay_term_floor,
+        )?;
+        let transfer = match &envelope.message {
+            ConsensusMessage::QueueOwnershipTransfer(value) => value.clone(),
+            _ => {
+                return Err(ConsensusError::DurableQueueOwnership(
+                    "envelope does not contain an ownership transfer".into(),
+                ))
+            }
+        };
+        transfer.validate()?;
+        if transfer.previous_owner_id != envelope.sender_id || transfer.new_owner_id != self.node_id
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership transfer sender or destination is not bound".into(),
+            ));
+        }
+        let peer_id = transfer.peer_id.clone();
+        let current = self.queue_ownership(&peer_id)?;
+        if current.owner_id != transfer.previous_owner_id
+            || (now_tick < current.lease_expiry_tick && transfer.owner_term <= current.owner_term)
+            || transfer.owner_term < current.owner_term
+            || transfer.ownership_epoch <= current.ownership_epoch
+        {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "ownership transfer is stale or lease is still authoritative".into(),
+            ));
+        }
+        let replacement = DurableQueueOwnership::new(
+            &peer_id,
+            &transfer.new_owner_id,
+            transfer.owner_term,
+            transfer.lease_expiry_tick,
+            transfer.ownership_epoch,
+        )?;
+        let previous = current;
+        let previous_acknowledgements = self
+            .replicated_acknowledgements
+            .get_mut(&peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.clone()))?
+            .clone();
+        self.ownership.insert(peer_id.clone(), replacement);
+        self.replicated_acknowledgements
+            .get_mut(&peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.clone()))?
+            .clear();
+        self.active_deliveries
+            .get_mut(&peer_id)
+            .ok_or_else(|| ConsensusError::UnknownMember(peer_id.clone()))?
+            .take();
+        if let Err(error) = self.persist_durable_queue(store) {
+            self.ownership.insert(peer_id.clone(), previous);
+            self.replicated_acknowledgements
+                .insert(peer_id.clone(), previous_acknowledgements);
+            return Err(error);
+        }
+        Ok(ReplicatedDeliveryAction::OwnershipTransferred {
+            owner_id: transfer.new_owner_id,
+            ownership_epoch: transfer.ownership_epoch,
+        })
     }
 
     pub fn deliver_next_durable_frame(
@@ -2944,17 +3778,17 @@ impl AuthenticatedSocketTransport {
                 available_bytes: 0,
             });
         }
-        let trusted_key = self
-            .trusted_keys
-            .get(&self.node_id)
-            .cloned()
-            .ok_or_else(|| ConsensusError::UnknownMember(self.node_id.clone()))?;
         let envelope: AuthenticatedConsensusEnvelope =
             serde_json::from_slice(&frame.frame_bytes)
                 .map_err(|error| ConsensusError::Serialization(error.to_string()))?;
+        let trusted_key = self
+            .trusted_keys
+            .get(&envelope.sender_id)
+            .cloned()
+            .ok_or_else(|| ConsensusError::UnknownMember(envelope.sender_id.clone()))?;
         envelope.verify_for_cluster_epoch(
             &self.cluster_id,
-            &self.node_id,
+            &envelope.sender_id,
             &trusted_key,
             self.replay_epoch,
             self.replay_term_floor,
@@ -3046,11 +3880,59 @@ impl AuthenticatedSocketTransport {
             .get_mut(peer_id)
             .ok_or_else(|| ConsensusError::UnknownMember(peer_id.to_string()))?
             .take();
-        self.acknowledge_durable_frame(store, peer_id, frame.sequence)?;
-        Ok(DurableSocketDeliveryAction::Delivered {
-            sequence: frame.sequence,
-            frame_bytes: frame.frame_bytes.len() as u64,
-        })
+        if let Some(signing_key) = self.local_delivery_signing_key.clone() {
+            let ownership = self.queue_ownership(peer_id)?;
+            let acknowledgement = ReplicatedDeliveryAcknowledgement::new(
+                peer_id,
+                frame.sequence,
+                &frame.frame_digest,
+                &ownership.owner_id,
+                &self.node_id,
+                ownership.owner_term,
+                ownership.ownership_epoch,
+                now_tick,
+            )?;
+            let envelope = AuthenticatedDeliveryAcknowledgement::sign(
+                &self.cluster_id,
+                &self.node_id,
+                self.replay_epoch,
+                acknowledgement,
+                &signing_key,
+            )?;
+            match self.record_authenticated_delivery_ack(store, envelope)? {
+                ReplicatedDeliveryAction::WaitingForQuorum {
+                    sequence,
+                    acknowledgements,
+                    required,
+                } => Ok(DurableSocketDeliveryAction::WaitingForQuorum {
+                    sequence,
+                    acknowledgements,
+                    required,
+                }),
+                ReplicatedDeliveryAction::Committed { sequence } => {
+                    Ok(DurableSocketDeliveryAction::Delivered {
+                        sequence,
+                        frame_bytes: frame.frame_bytes.len() as u64,
+                    })
+                }
+                ReplicatedDeliveryAction::OwnershipTransferred { .. } => {
+                    Err(ConsensusError::DurableQueueOwnership(
+                        "delivery acknowledgement cannot transfer ownership".into(),
+                    ))
+                }
+            }
+        } else {
+            if self.ack_quorum_size != 1 {
+                return Err(ConsensusError::ReplicatedDeliveryAcknowledgement(
+                    "a signing key is required for replicated acknowledgement quorum".into(),
+                ));
+            }
+            self.acknowledge_durable_frame(store, peer_id, frame.sequence)?;
+            Ok(DurableSocketDeliveryAction::Delivered {
+                sequence: frame.sequence,
+                frame_bytes: frame.frame_bytes.len() as u64,
+            })
+        }
     }
 
     pub fn enqueue_durable_frame_with_backpressure(
@@ -3170,6 +4052,11 @@ impl AuthenticatedSocketTransport {
         if sequence == 0 {
             return Err(ConsensusError::SocketQuota(
                 "queue sequence must be positive".into(),
+            ));
+        }
+        if self.queue_ownership(peer_id)?.owner_id != self.node_id {
+            return Err(ConsensusError::DurableQueueOwnership(
+                "local acknowledgement requires current queue ownership".into(),
             ));
         }
         let frames = self
@@ -6269,6 +7156,8 @@ fn message_term(message: &ConsensusMessage) -> u64 {
         ConsensusMessage::ReplicationBatch(value) => value.term,
         ConsensusMessage::ReplicationBatchAck(value) => value.response.term,
         ConsensusMessage::SnapshotInstallAck(value) => value.term,
+        ConsensusMessage::ReplicatedDeliveryAcknowledgement(value) => value.acknowledgement_term,
+        ConsensusMessage::QueueOwnershipTransfer(value) => value.owner_term,
     }
 }
 

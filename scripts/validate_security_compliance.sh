@@ -69,6 +69,8 @@ printf '%s\n' '== Phase 25 durable transport queues and quota recovery =='
 scripts/validate_phase25_durable_transport_queue.sh >"$TMP_DIR/phase25-durable-transport-queue.log"
 printf '%s\n' '== Phase 26 authenticated durable delivery and crash injection =='
 scripts/validate_phase26_authenticated_delivery.sh >"$TMP_DIR/phase26-authenticated-delivery.log"
+printf '%s\n' '== Phase 27 replicated delivery acknowledgements and ownership =='
+scripts/validate_phase27_replicated_delivery_ownership.sh >"$TMP_DIR/phase27-replicated-delivery-ownership.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 38.046,
-        "verification_throughput_ops_per_sec": 32759.113465795395
+        "verification_p95_us": 33.31,
+        "verification_throughput_ops_per_sec": 34218.37834403396
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.945,
-        "verification_throughput_ops_per_sec": 32924.001116672254
+        "verification_p95_us": 30.115,
+        "verification_throughput_ops_per_sec": 33659.327661661875
       },
       {
         "cluster_size": 5,
@@ -39,15 +39,16 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 29.345,
-        "verification_throughput_ops_per_sec": 33454.5636112495
+        "verification_p95_us": 28.984,
+        "verification_throughput_ops_per_sec": 33584.86155648372
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "f5fb879d1723706ad7bf29c7986af8fe3af17614",
+  "commit": "a0e4ad284161d90888d240cb956c40bd63a253f3",
   "gates": {
     "atomic_queue_cutover": "passed",
+    "authenticated_ack_binding": "passed",
     "authenticated_consensus_transport": "passed",
     "authenticated_delivery_ack_order": "passed",
     "authenticated_durable_delivery": "passed",
@@ -59,6 +60,7 @@
     "compose_mtls_smoke": "passed",
     "configuration_bound_snapshots": "passed",
     "crash_retry_queue_retention": "passed",
+    "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
     "durable_compaction_manifests": "passed",
     "durable_consensus_state_recovery": "passed",
@@ -67,6 +69,7 @@
     "durable_transport_queue": "passed",
     "election_timer_safety": "passed",
     "epoch_bound_replay_window": "passed",
+    "failover_owner_lease": "passed",
     "failure_detector_boundaries": "passed",
     "failure_injection_snapshot_recovery": "passed",
     "follower_triggered_snapshot_requests": "passed",
@@ -86,6 +89,7 @@
     "remote_audit_outbox_durability": "passed",
     "replay_term_floor": "passed",
     "replay_window_and_cluster_binding": "passed",
+    "replicated_ack_quorum": "passed",
     "replication_backpressure_boundaries": "passed",
     "replication_flow_control": "passed",
     "rust_all_targets": "passed",
@@ -104,7 +108,7 @@
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed"
   },
-  "generated_at_utc": "2026-08-18T17:42:48.952590+00:00",
+  "generated_at_utc": "2026-08-18T21:33:14.909623+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -191,131 +195,131 @@
       "operations": 128,
       "p50_us": 2,
       "p95_us": 2,
-      "p99_us": 4,
+      "p99_us": 5,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 194412.1689867025
+      "throughput_ops_per_sec": 186229.22198377768
     },
     {
       "concurrency": 1,
       "errors": 0,
       "operations": 128,
-      "p50_us": 4,
-      "p95_us": 5,
-      "p99_us": 6,
+      "p50_us": 5,
+      "p95_us": 26,
+      "p99_us": 43,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 178159.8316389591
+      "throughput_ops_per_sec": 111953.67916524538
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
       "p50_us": 10,
-      "p95_us": 34,
-      "p99_us": 106,
+      "p95_us": 35,
+      "p99_us": 109,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 107797.9159631028
+      "throughput_ops_per_sec": 102937.78818057057
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 11,
-      "p99_us": 22,
+      "p50_us": 8,
+      "p95_us": 42,
+      "p99_us": 62,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 107449.16521232542
+      "throughput_ops_per_sec": 96953.75835942122
+    },
+    {
+      "concurrency": 4,
+      "errors": 0,
+      "operations": 512,
+      "p50_us": 4,
+      "p95_us": 26,
+      "p99_us": 223,
+      "path": "lease_fast_path",
+      "successful": 512,
+      "throughput_ops_per_sec": 130982.93998371922
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 147,
-      "p99_us": 534,
-      "path": "lease_fast_path",
+      "p95_us": 132,
+      "p99_us": 499,
+      "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 85274.77798578309
+      "throughput_ops_per_sec": 91672.64985882054
     },
     {
-      "concurrency": 4,
+      "concurrency": 8,
       "errors": 0,
-      "operations": 512,
+      "operations": 1024,
+      "p50_us": 11,
+      "p95_us": 339,
+      "p99_us": 1065,
+      "path": "lease_fast_path",
+      "successful": 1024,
+      "throughput_ops_per_sec": 84314.01205838581
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "operations": 1024,
+      "p50_us": 11,
+      "p95_us": 368,
+      "p99_us": 1216,
+      "path": "quorum_read_index",
+      "successful": 1024,
+      "throughput_ops_per_sec": 90141.44812940649
+    },
+    {
+      "concurrency": 16,
+      "errors": 0,
+      "operations": 2048,
+      "p50_us": 11,
+      "p95_us": 555,
+      "p99_us": 2497,
+      "path": "lease_fast_path",
+      "successful": 2048,
+      "throughput_ops_per_sec": 91803.9964951314
+    },
+    {
+      "concurrency": 16,
+      "errors": 0,
+      "operations": 2048,
       "p50_us": 10,
-      "p95_us": 14,
-      "p99_us": 593,
-      "path": "quorum_read_index",
-      "successful": 512,
-      "throughput_ops_per_sec": 100042.30304415831
-    },
-    {
-      "concurrency": 8,
-      "errors": 0,
-      "operations": 1024,
-      "p50_us": 5,
-      "p95_us": 278,
-      "p99_us": 815,
-      "path": "lease_fast_path",
-      "successful": 1024,
-      "throughput_ops_per_sec": 108919.03284578946
-    },
-    {
-      "concurrency": 8,
-      "errors": 0,
-      "operations": 1024,
-      "p50_us": 12,
-      "p95_us": 434,
-      "p99_us": 1253,
-      "path": "quorum_read_index",
-      "successful": 1024,
-      "throughput_ops_per_sec": 79144.15489500415
-    },
-    {
-      "concurrency": 16,
-      "errors": 0,
-      "operations": 2048,
-      "p50_us": 11,
-      "p95_us": 677,
-      "p99_us": 2683,
-      "path": "lease_fast_path",
-      "successful": 2048,
-      "throughput_ops_per_sec": 84635.89826665845
-    },
-    {
-      "concurrency": 16,
-      "errors": 0,
-      "operations": 2048,
-      "p50_us": 11,
-      "p95_us": 640,
-      "p99_us": 2945,
+      "p95_us": 284,
+      "p99_us": 3440,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 87659.3823489102
+      "throughput_ops_per_sec": 88245.43260944502
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "operations": 4096,
+      "p50_us": 10,
+      "p95_us": 1267,
+      "p99_us": 4827,
+      "path": "lease_fast_path",
+      "successful": 4096,
+      "throughput_ops_per_sec": 95647.36088358733
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1899,
-      "p99_us": 4386,
-      "path": "lease_fast_path",
-      "successful": 4096,
-      "throughput_ops_per_sec": 86280.08652022154
-    },
-    {
-      "concurrency": 32,
-      "errors": 0,
-      "operations": 4096,
-      "p50_us": 11,
-      "p95_us": 1778,
-      "p99_us": 4087,
+      "p95_us": 1339,
+      "p99_us": 6222,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 90572.5916988893
+      "throughput_ops_per_sec": 94545.63114702408
     }
   ],
   "phase15_election_timers": {
@@ -435,6 +439,17 @@
     "restart_retry_after_crash": true,
     "socket_thread_and_process_ownership": "deployment_boundary",
     "tampered_payload_fails_closed": true
+  },
+  "phase27_replicated_delivery_ownership": {
+    "ack_hash_owner_term_epoch_bound": true,
+    "conflicting_sender_ack_rejected": true,
+    "cross_host_restore_validates_source_identity": true,
+    "failover_new_owner_can_retry": true,
+    "idempotent_same_sender_ack": true,
+    "old_owner_cannot_ack_after_transfer": true,
+    "ownership_transfer_lease_and_term_bound": true,
+    "quorum_ack_required": true,
+    "transport_and_replica_quorum": "deployment_boundary"
   },
   "repository_search_before_after": {
     "baseline_errors": 0,
