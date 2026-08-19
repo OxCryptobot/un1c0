@@ -183,6 +183,7 @@ pub enum SimulationEventKind {
     AcknowledgementDropped,
     AcknowledgementCorrupted,
     AcknowledgementDelivered,
+    FaultInjected,
     FenceRecorded,
     ObserverReportAccepted,
     TransferAccepted,
@@ -304,6 +305,7 @@ pub struct MultiRegionSimulationReport {
     pub invariant_failures: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct MultiRegionFailoverSimulator {
     snapshot: MultiRegionSnapshot,
     invariant_failures: Vec<String>,
@@ -404,6 +406,22 @@ impl MultiRegionFailoverSimulator {
             "durable snapshot restored",
         );
         self.assert_invariants();
+        Ok(())
+    }
+
+    pub fn inject_link_fault(
+        &mut self,
+        from: &str,
+        to: &str,
+        fault: LinkFault,
+    ) -> Result<(), MultiRegionSimulationError> {
+        self.set_link_fault(from, to, fault.clone())?;
+        self.record(
+            SimulationEventKind::FaultInjected,
+            Some(NodeId::new(from)?),
+            Some(NodeId::new(to)?),
+            "replay fault injected",
+        );
         Ok(())
     }
 
@@ -719,6 +737,10 @@ impl MultiRegionFailoverSimulator {
 
     pub fn events(&self) -> &[SimulationEvent] {
         &self.snapshot.events
+    }
+
+    pub fn current_tick(&self) -> u64 {
+        self.snapshot.tick
     }
 
     fn schedule_ack(&mut self, sender: NodeId, delay: u64) {

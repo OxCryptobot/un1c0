@@ -58,6 +58,7 @@ def main() -> None:
     partition_metrics = load_json(root / "benchmarks/consensus_partition_metrics.json")
     phase14_reads = load_json(root / "benchmarks/phase14_read_benchmark.json")
     phase30_failover = load_json(root / "benchmarks/phase30_multiregion_failover_metrics.json")
+    phase31_replay = load_json(root / "benchmarks/phase31_secure_replay_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -138,6 +139,12 @@ def main() -> None:
             "transfer_crash_recovers_safely": "passed",
             "clock_skew_boundary_fail_closed": "passed",
             "multi_region_retry_reaches_quorum": "passed",
+            "signed_replay_manifest_required": "passed",
+            "replay_schedule_hash_bound": "passed",
+            "replay_sequence_tick_bounds_enforced": "passed",
+            "trusted_key_cluster_epoch_binding": "passed",
+            "tampered_schedule_rejected": "passed",
+            "trace_seal_verification": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -145,6 +152,7 @@ def main() -> None:
         "authenticated_consensus_partition": partition_metrics,
         "phase14_read_optimization": phase14_reads,
         "phase30_multi_region_failover": phase30_failover,
+        "phase31_secure_replay": phase31_replay,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -290,6 +298,15 @@ def main() -> None:
             "clock_skew_boundary_is_fail_closed": True,
             "multi_region_retry_reaches_quorum": True,
             "transport_and_cloud_region_authority": "deployment_boundary",
+        },
+        "phase31_secure_replay_verification": {
+            "signed_replay_manifest_required": True,
+            "replay_schedule_hash_bound": True,
+            "replay_sequence_tick_bounds_enforced": True,
+            "trusted_key_cluster_epoch_binding": True,
+            "tampered_schedule_rejected": True,
+            "trace_seal_verification": True,
+            "production_key_custody_and_transport": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

@@ -1,0 +1,18 @@
+{
+  "benchmark": "phase31_secure_replay",
+  "production_boundary": "not a production key-custody, transport, or cloud-region benchmark",
+  "security_checks": {
+    "private_key_persisted": false,
+    "signed_manifest_accepted": true,
+    "tampered_schedule_rejected": true,
+    "trace_seal_verified": true
+  },
+  "valid_replay": {
+    "applied_steps": 1,
+    "event_count": 1,
+    "liveness_passed": false,
+    "safety_passed": true,
+    "trace_digest": "765715b09766b063e0e9d53d862a293076aacd9297cff7d3726f105bb00faa3f"
+  },
+  "verification_mode": "deterministic_local_ed25519_and_sha256"
+}

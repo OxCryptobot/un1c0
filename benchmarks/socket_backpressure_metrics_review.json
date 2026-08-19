@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "cluster_mutation_performed": false,
   "failures": [],
-  "gate_count": 76,
+  "gate_count": 82,
   "phase24_evidence_checked": [
     "per_peer_send_isolation",
     "exact_frame_byte_admission",
@@ -50,6 +50,14 @@
     "transfer_crash_recovers_safely",
     "clock_skew_boundary_is_fail_closed",
     "multi_region_retry_reaches_quorum"
+  ],
+  "phase31_evidence_checked": [
+    "signed_replay_manifest_required",
+    "replay_schedule_hash_bound",
+    "replay_sequence_tick_bounds_enforced",
+    "trusted_key_cluster_epoch_binding",
+    "tampered_schedule_rejected",
+    "trace_seal_verification"
   ],
   "result": "passed",
   "runtime_metric_contract": [
