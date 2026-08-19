@@ -45,10 +45,11 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "d1bfa1864a680ef90d396d6111e18e23499d65f9",
+  "commit": "48fb53e61f7f50fba97e79ba2461b81e8b035af1",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
+    "atomic_recovery_cutover": "passed",
     "authenticated_ack_binding": "passed",
     "authenticated_consensus_transport": "passed",
     "authenticated_delivery_ack_order": "passed",
@@ -61,6 +62,7 @@
     "compaction_quorum_admission": "passed",
     "compaction_recovery": "passed",
     "compose_mtls_smoke": "passed",
+    "concurrent_partition_race_single_commit": "passed",
     "configuration_bound_snapshots": "passed",
     "crash_retry_queue_retention": "passed",
     "cross_host_queue_ownership": "passed",
@@ -69,6 +71,7 @@
     "durable_compaction_manifests": "passed",
     "durable_consensus_state_recovery": "passed",
     "durable_external_audit_sink": "passed",
+    "durable_recovery_snapshot_hash_bound": "passed",
     "durable_term_vote_persistence": "passed",
     "durable_transport_queue": "passed",
     "election_timer_safety": "passed",
@@ -88,9 +91,11 @@
     "log_compaction_safety": "passed",
     "multi_region_retry_reaches_quorum": "passed",
     "network_stress_packet_corruption": "passed",
+    "observer_membership_epoch_bound": "passed",
     "observer_quorum_admission": "passed",
     "old_region_fenced_on_commit": "passed",
     "ownership_transfer_clears_fence": "passed",
+    "partial_staging_cleanup": "passed",
     "per_peer_socket_quotas": "passed",
     "phase11_membership_change": "passed",
     "python_tests": "passed",
@@ -111,6 +116,7 @@
     "replicated_ack_quorum": "passed",
     "replication_backpressure_boundaries": "passed",
     "replication_flow_control": "passed",
+    "restart_preserves_pending_authority": "passed",
     "rust_all_targets": "passed",
     "signed_region_failure_observation_required": "passed",
     "signed_replay_manifest_required": "passed",
@@ -131,6 +137,7 @@
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed",
     "split_brain_commit_exclusion": "passed",
+    "stale_membership_evidence_rejected": "passed",
     "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
     "tampered_schedule_rejected": "passed",
@@ -138,7 +145,7 @@
     "transfer_crash_recovers_safely": "passed",
     "trusted_key_cluster_epoch_binding": "passed"
   },
-  "generated_at_utc": "2026-08-19T05:48:45.551331+00:00",
+  "generated_at_utc": "2026-08-19T16:16:36.399827+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -578,6 +585,16 @@
     "snapshot_hash_binding_required": true,
     "stale_or_conflicting_failover_rejected": true,
     "terminal_recovery_cycle_protected": true
+  },
+  "phase33_durable_recovery": {
+    "atomic_cutover": true,
+    "concurrent_partition_race_single_commit": true,
+    "durable_storage_and_external_fencing": "deployment_boundary",
+    "observer_membership_epoch_bound": true,
+    "partial_staging_cleanup": true,
+    "restart_preserves_pending_authority": true,
+    "snapshot_hash_bound": true,
+    "stale_membership_evidence_rejected": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,
