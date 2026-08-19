@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "2e3d37129803cf3aefc5acf9dd7d87503b4c7676",
+  "commit": "fd85cef4d2e3c83b4d9463c848f1dcdcc5c2832f",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -64,6 +64,7 @@
     "compose_mtls_smoke": "passed",
     "concurrent_partition_race_single_commit": "passed",
     "configuration_bound_snapshots": "passed",
+    "conflicting_quorum_split_brain_rejected": "passed",
     "crash_retry_queue_retention": "passed",
     "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
@@ -82,7 +83,10 @@
     "failure_detector_boundaries": "passed",
     "failure_injection_snapshot_recovery": "passed",
     "fence_survives_restart": "passed",
+    "fencing_authority_registry_pinned": "passed",
     "fencing_epoch_monotonicity": "passed",
+    "fencing_generation_rollback_rejected": "passed",
+    "fencing_token_domain_bound": "passed",
     "follower_triggered_snapshot_requests": "passed",
     "helm_fail_closed": "passed",
     "higher_term_epoch_promotion_required": "passed",
@@ -94,11 +98,13 @@
     "lease_expiry_fences_delivery": "passed",
     "linearizable_read_consistency": "passed",
     "log_compaction_safety": "passed",
+    "multi_leader_proposal_signature_required": "passed",
     "multi_region_retry_reaches_quorum": "passed",
     "network_stress_packet_corruption": "passed",
     "observer_membership_epoch_bound": "passed",
     "observer_quorum_admission": "passed",
     "old_region_fenced_on_commit": "passed",
+    "one_witness_vote_per_round": "passed",
     "ownership_transfer_clears_fence": "passed",
     "partial_staging_cleanup": "passed",
     "per_peer_socket_quotas": "passed",
@@ -146,14 +152,16 @@
     "split_brain_commit_exclusion": "passed",
     "stale_external_fence_rejected": "passed",
     "stale_membership_evidence_rejected": "passed",
+    "stale_multi_leader_log_rejected": "passed",
     "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
     "tampered_schedule_rejected": "passed",
     "trace_seal_verification": "passed",
     "transfer_crash_recovers_safely": "passed",
-    "trusted_key_cluster_epoch_binding": "passed"
+    "trusted_key_cluster_epoch_binding": "passed",
+    "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-19T18:36:58.393868+00:00",
+  "generated_at_utc": "2026-08-19T20:08:25.649482+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -614,6 +622,17 @@
     "replicated_recovery_log_hash_bound": true,
     "stale_external_fence_rejected": true,
     "transport_process_fencing_and_external_registry": "deployment_boundary"
+  },
+  "phase35_multileader_witness": {
+    "conflicting_quorum_split_brain_rejected": true,
+    "fencing_authority_registry_pinned": true,
+    "fencing_generation_rollback_rejected": true,
+    "fencing_token_domain_bound": true,
+    "multi_leader_proposal_signature_required": true,
+    "one_witness_vote_per_round": true,
+    "stale_multi_leader_log_rejected": true,
+    "transport_failure_detector_and_process_fencing": "deployment_boundary",
+    "witness_quorum_arbitration_required": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,

@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "cluster_mutation_performed": false,
   "failures": [],
-  "gate_count": 105,
+  "gate_count": 113,
   "phase24_evidence_checked": [
     "per_peer_send_isolation",
     "exact_frame_byte_admission",
@@ -78,6 +78,16 @@
     "stale_external_fence_rejected",
     "replicated_authority_restart_continuity",
     "dynamic_partition_epoch_chaos_safe"
+  ],
+  "phase35_evidence_checked": [
+    "multi_leader_proposal_signature_required",
+    "witness_quorum_arbitration_required",
+    "one_witness_vote_per_round",
+    "conflicting_quorum_split_brain_rejected",
+    "stale_multi_leader_log_rejected",
+    "fencing_token_domain_bound",
+    "fencing_authority_registry_pinned",
+    "fencing_generation_rollback_rejected"
   ],
   "result": "passed",
   "runtime_metric_contract": [
