@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 35.994,
-        "verification_throughput_ops_per_sec": 34354.62522726519
+        "verification_p95_us": 34.392,
+        "verification_throughput_ops_per_sec": 33524.64889417293
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 28.733,
-        "verification_throughput_ops_per_sec": 33856.35476584489
+        "verification_p95_us": 29.815,
+        "verification_throughput_ops_per_sec": 33059.92196260509
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 28.443,
-        "verification_throughput_ops_per_sec": 34606.717046981015
+        "verification_p95_us": 30.166,
+        "verification_throughput_ops_per_sec": 32435.32487444385
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "bdd3edfd08e66c4e2a8371573f62782263ba109f",
+  "commit": "03dba2ef3e330a70ac64f6687cff486b8065e81b",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -138,7 +138,7 @@
     "transfer_crash_recovers_safely": "passed",
     "trusted_key_cluster_epoch_binding": "passed"
   },
-  "generated_at_utc": "2026-08-19T05:31:28.442272+00:00",
+  "generated_at_utc": "2026-08-19T05:34:23.809623+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -224,132 +224,132 @@
       "errors": 0,
       "operations": 128,
       "p50_us": 2,
-      "p95_us": 2,
-      "p99_us": 4,
+      "p95_us": 3,
+      "p99_us": 7,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 306639.7079256782
+      "throughput_ops_per_sec": 196946.7105283403
     },
     {
       "concurrency": 1,
       "errors": 0,
       "operations": 128,
       "p50_us": 4,
-      "p95_us": 5,
+      "p95_us": 6,
       "p99_us": 8,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 174402.84058626604
+      "throughput_ops_per_sec": 177917.14620897482
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 10,
-      "p95_us": 24,
-      "p99_us": 228,
+      "p50_us": 11,
+      "p95_us": 21,
+      "p99_us": 126,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 91866.14958464658
+      "throughput_ops_per_sec": 95979.07656130963
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 4,
-      "p95_us": 15,
-      "p99_us": 121,
+      "p50_us": 11,
+      "p95_us": 19,
+      "p99_us": 325,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 122091.03794551305
+      "throughput_ops_per_sec": 88088.81003716936
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 116,
-      "p99_us": 521,
+      "p95_us": 126,
+      "p99_us": 701,
       "path": "lease_fast_path",
       "successful": 512,
-      "throughput_ops_per_sec": 86735.11738886639
+      "throughput_ops_per_sec": 87621.75059358601
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 48,
-      "p99_us": 526,
+      "p95_us": 47,
+      "p99_us": 464,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 88999.31912044338
+      "throughput_ops_per_sec": 86415.57316647927
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 402,
-      "p99_us": 859,
+      "p95_us": 316,
+      "p99_us": 1203,
       "path": "lease_fast_path",
       "successful": 1024,
-      "throughput_ops_per_sec": 92160.27463761842
+      "throughput_ops_per_sec": 95444.46548862348
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 280,
-      "p99_us": 1566,
+      "p95_us": 193,
+      "p99_us": 1355,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 80409.79469824616
+      "throughput_ops_per_sec": 86777.08712029728
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 727,
-      "p99_us": 2454,
+      "p95_us": 482,
+      "p99_us": 2749,
       "path": "lease_fast_path",
       "successful": 2048,
-      "throughput_ops_per_sec": 86833.18852655443
+      "throughput_ops_per_sec": 90724.87045126408
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 553,
-      "p99_us": 2798,
+      "p95_us": 503,
+      "p99_us": 3113,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 87854.76509145818
+      "throughput_ops_per_sec": 86826.12771156768
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1378,
-      "p99_us": 4892,
+      "p95_us": 1355,
+      "p99_us": 4580,
       "path": "lease_fast_path",
       "successful": 4096,
-      "throughput_ops_per_sec": 89414.76529857492
+      "throughput_ops_per_sec": 89050.50550728242
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1674,
-      "p99_us": 4600,
+      "p95_us": 1370,
+      "p99_us": 4537,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 86942.65270269175
+      "throughput_ops_per_sec": 91856.90344996231
     }
   ],
   "phase15_election_timers": {
