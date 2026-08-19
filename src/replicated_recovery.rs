@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const MAX_IDENTIFIER_BYTES: usize = 128;
+pub const EXTERNAL_FENCING_TOKEN_DOMAIN: &str = "un1c0/external-fencing-token/v1";
 const MAX_MEMBERS: usize = 64;
 const MAX_LOG_ENTRIES: usize = 4096;
 const MAX_AUTHORITY_SNAPSHOT_BYTES: u64 = 4 * 1024 * 1024;
@@ -70,7 +71,7 @@ impl ReplicatedRecoveryConfig {
         Ok(config)
     }
 
-    pub fn validate(&self) -> Result<(), ReplicatedRecoveryError> {
+    pub(crate) fn validate(&self) -> Result<(), ReplicatedRecoveryError> {
         validate_identifier(&self.cluster_id, "cluster")?;
         validate_identifier(&self.resource_id, "resource")?;
         if self.max_members < 3 || self.max_members > MAX_MEMBERS {
@@ -174,6 +175,8 @@ impl ObserverMembership {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExternalFencingToken {
+    pub domain: String,
+    pub protocol_version: u16,
     pub cluster_id: String,
     pub resource_id: String,
     pub owner_region_id: String,
@@ -189,6 +192,8 @@ pub struct ExternalFencingToken {
 
 #[derive(Debug, Clone, Serialize)]
 struct FencingTokenPayload<'a> {
+    domain: &'a str,
+    protocol_version: u16,
     cluster_id: &'a str,
     resource_id: &'a str,
     owner_region_id: &'a str,
@@ -202,7 +207,7 @@ struct FencingTokenPayload<'a> {
 }
 
 impl ExternalFencingToken {
-    fn issue(
+    pub(crate) fn issue(
         config: &ReplicatedRecoveryConfig,
         authority_id: &str,
         owner_region_id: &str,
@@ -214,6 +219,8 @@ impl ExternalFencingToken {
         signing_key: &SigningKey,
     ) -> Result<Self, ReplicatedRecoveryError> {
         let mut token = Self {
+            domain: EXTERNAL_FENCING_TOKEN_DOMAIN.to_string(),
+            protocol_version: 1,
             cluster_id: config.cluster_id.clone(),
             resource_id: config.resource_id.clone(),
             owner_region_id: owner_region_id.to_string(),
@@ -268,6 +275,11 @@ impl ExternalFencingToken {
     }
 
     fn validate_shape(&self) -> Result<(), ReplicatedRecoveryError> {
+        if self.domain != EXTERNAL_FENCING_TOKEN_DOMAIN || self.protocol_version != 1 {
+            return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing token domain or protocol version is invalid".into(),
+            ));
+        }
         validate_identifier(&self.cluster_id, "cluster")?;
         validate_identifier(&self.resource_id, "resource")?;
         validate_identifier(&self.owner_region_id, "owner region")?;
@@ -292,6 +304,8 @@ impl ExternalFencingToken {
 
     fn canonical_payload(&self) -> Result<Vec<u8>, ReplicatedRecoveryError> {
         serde_json::to_vec(&FencingTokenPayload {
+            domain: &self.domain,
+            protocol_version: self.protocol_version,
             cluster_id: &self.cluster_id,
             resource_id: &self.resource_id,
             owner_region_id: &self.owner_region_id,
@@ -317,6 +331,11 @@ pub enum ExternalFenceAction {
 pub struct ExternalFenceState {
     pub resource_id: String,
     pub active_owner_region_id: Option<String>,
+    pub accepted_authority_id: Option<String>,
+    pub accepted_authority_public_key: Option<Vec<u8>>,
+    pub accepted_membership_epoch: u64,
+    pub accepted_owner_term: u64,
+    pub accepted_ownership_epoch: u64,
     pub accepted_fence_epoch: u64,
     pub accepted_token_hash: Option<String>,
 }
@@ -327,6 +346,11 @@ impl ExternalFenceState {
         Ok(Self {
             resource_id: resource_id.to_string(),
             active_owner_region_id: None,
+            accepted_authority_id: None,
+            accepted_authority_public_key: None,
+            accepted_membership_epoch: 0,
+            accepted_owner_term: 0,
+            accepted_ownership_epoch: 0,
             accepted_fence_epoch: 0,
             accepted_token_hash: None,
         })
@@ -340,23 +364,89 @@ impl ExternalFenceState {
     ) -> Result<ExternalFenceAction, ReplicatedRecoveryError> {
         token.verify(trusted_key, expected_cluster_id, &self.resource_id)?;
         let token_hash = token.token_hash();
+        if self.accepted_token_hash.as_deref() == Some(token_hash.as_str()) {
+            return Ok(ExternalFenceAction::AlreadyActive(token));
+        }
+        if self
+            .accepted_authority_id
+            .as_deref()
+            .is_some_and(|authority_id| authority_id != token.authority_id)
+            || self
+                .accepted_authority_public_key
+                .as_deref()
+                .is_some_and(|key| key != &token.public_key)
+        {
+            return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing authority identity or key changed without an explicit transition".into(),
+            ));
+        }
+        if token.membership_epoch < self.accepted_membership_epoch
+            || token.owner_term < self.accepted_owner_term
+            || token.ownership_epoch < self.accepted_ownership_epoch
+        {
+            return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing token generation regressed".into(),
+            ));
+        }
         if token.fence_epoch < self.accepted_fence_epoch {
             return Err(ReplicatedRecoveryError::FencingTokenRejected(
                 "fencing token is older than the externally accepted token".into(),
             ));
         }
         if token.fence_epoch == self.accepted_fence_epoch {
-            if self.accepted_token_hash.as_deref() == Some(token_hash.as_str()) {
-                return Ok(ExternalFenceAction::AlreadyActive(token));
-            }
             return Err(ReplicatedRecoveryError::FencingTokenRejected(
                 "same fence epoch carries a conflicting token".into(),
             ));
         }
+        self.accepted_authority_id = Some(token.authority_id.clone());
+        self.accepted_authority_public_key = Some(token.public_key.clone());
+        self.accepted_membership_epoch = token.membership_epoch;
+        self.accepted_owner_term = token.owner_term;
+        self.accepted_ownership_epoch = token.ownership_epoch;
         self.accepted_fence_epoch = token.fence_epoch;
         self.active_owner_region_id = Some(token.owner_region_id.clone());
         self.accepted_token_hash = Some(token_hash);
         Ok(ExternalFenceAction::Activated(token))
+    }
+
+    pub fn apply_with_authority(
+        &mut self,
+        token: ExternalFencingToken,
+        expected_authority_id: &str,
+        trusted_key: &VerifyingKey,
+        expected_cluster_id: &str,
+    ) -> Result<ExternalFenceAction, ReplicatedRecoveryError> {
+        if token.authority_id != expected_authority_id {
+            return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing token authority ID does not match the expected authority".into(),
+            ));
+        }
+        self.apply(token, trusted_key, expected_cluster_id)
+    }
+
+    pub fn apply_from_registry(
+        &mut self,
+        token: ExternalFencingToken,
+        registry: &TrustedFencingAuthorityRegistry,
+        expected_cluster_id: &str,
+    ) -> Result<ExternalFenceAction, ReplicatedRecoveryError> {
+        let key = registry.key_for(&token.authority_id)?;
+        self.apply(token, &key, expected_cluster_id)
+    }
+
+    pub fn admit_with_authority(
+        &self,
+        token: &ExternalFencingToken,
+        expected_authority_id: &str,
+        trusted_key: &VerifyingKey,
+        expected_cluster_id: &str,
+    ) -> Result<bool, ReplicatedRecoveryError> {
+        if token.authority_id != expected_authority_id {
+            return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing token authority ID does not match the expected authority".into(),
+            ));
+        }
+        self.admit(token, trusted_key, expected_cluster_id)
     }
 
     pub fn admit(
@@ -369,6 +459,62 @@ impl ExternalFenceState {
         Ok(self.accepted_fence_epoch == token.fence_epoch
             && self.accepted_token_hash.as_deref() == Some(token.token_hash().as_str())
             && self.active_owner_region_id.as_deref() == Some(token.owner_region_id.as_str()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustedFencingAuthorityRegistry {
+    authorities: BTreeMap<String, Vec<u8>>,
+}
+
+impl TrustedFencingAuthorityRegistry {
+    pub fn new() -> Self {
+        Self {
+            authorities: BTreeMap::new(),
+        }
+    }
+
+    pub fn register(
+        &mut self,
+        authority_id: &str,
+        verifying_key: &VerifyingKey,
+    ) -> Result<(), ReplicatedRecoveryError> {
+        validate_identifier(authority_id, "authority")?;
+        let key = verifying_key.to_bytes().to_vec();
+        if let Some(existing) = self.authorities.get(authority_id) {
+            if existing != &key {
+                return Err(ReplicatedRecoveryError::FencingTokenRejected(
+                    "authority key rebinding requires an explicit registry transition".into(),
+                ));
+            }
+            return Ok(());
+        }
+        self.authorities.insert(authority_id.to_string(), key);
+        Ok(())
+    }
+
+    pub fn key_for(&self, authority_id: &str) -> Result<VerifyingKey, ReplicatedRecoveryError> {
+        let bytes = self.authorities.get(authority_id).ok_or_else(|| {
+            ReplicatedRecoveryError::FencingTokenRejected(
+                "fencing token authority is not trusted".into(),
+            )
+        })?;
+        VerifyingKey::from_bytes(bytes.as_slice().try_into().map_err(|_| {
+            ReplicatedRecoveryError::FencingTokenRejected("trusted authority key length".into())
+        })?)
+        .map_err(|_| {
+            ReplicatedRecoveryError::FencingTokenRejected("trusted authority key encoding".into())
+        })
+    }
+
+    pub fn contains(&self, authority_id: &str) -> bool {
+        self.authorities.contains_key(authority_id)
+    }
+}
+
+impl Default for TrustedFencingAuthorityRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

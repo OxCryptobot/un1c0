@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 105
+EXPECTED_GATE_COUNT = 113
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -15,6 +15,17 @@ INTENTIONAL_FALSE_EVIDENCE = {
 }
 
 REQUIRED_PHASES = {
+    "phase35_multileader_witness": [
+        "multi_leader_proposal_signature_required",
+        "witness_quorum_arbitration_required",
+        "one_witness_vote_per_round",
+        "conflicting_quorum_split_brain_rejected",
+        "stale_multi_leader_log_rejected",
+        "fencing_token_domain_bound",
+        "fencing_authority_registry_pinned",
+        "fencing_generation_rollback_rejected",
+        "transport_failure_detector_and_process_fencing",
+    ],
     "phase34_replicated_recovery": [
         "joint_observer_quorum_required",
         "joint_to_final_membership_ordering",

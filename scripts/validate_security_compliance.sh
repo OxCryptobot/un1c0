@@ -85,6 +85,8 @@ printf '%s\n' '== Phase 33 durable recovery and observer-membership epochs =='
 scripts/validate_phase33_durable_recovery.sh >"$TMP_DIR/phase33-durable-recovery.log"
 printf '%s\n' '== Phase 34 replicated recovery authority and external fencing =='
 scripts/validate_phase34_replicated_recovery.sh >"$TMP_DIR/phase34-replicated-recovery.log"
+printf '%s\n' '== Phase 35 multi-leader witness arbitration and fencing audit =='
+scripts/validate_phase35_multileader_witness.sh >"$TMP_DIR/phase35-multileader-witness.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

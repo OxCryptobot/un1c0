@@ -83,6 +83,16 @@ PHASE34_KEYS = [
     "replicated_authority_restart_continuity",
     "dynamic_partition_epoch_chaos_safe",
 ]
+PHASE35_KEYS = [
+    "multi_leader_proposal_signature_required",
+    "witness_quorum_arbitration_required",
+    "one_witness_vote_per_round",
+    "conflicting_quorum_split_brain_rejected",
+    "stale_multi_leader_log_rejected",
+    "fencing_token_domain_bound",
+    "fencing_authority_registry_pinned",
+    "fencing_generation_rollback_rejected",
+]
 
 
 def main() -> int:
@@ -103,6 +113,7 @@ def main() -> int:
     phase31 = artifact["phase31_secure_replay_verification"]
     phase32 = artifact["phase32_disaster_recovery_failover"]
     phase34 = artifact["phase34_replicated_recovery"]
+    phase35 = artifact["phase35_multileader_witness"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -143,6 +154,11 @@ def main() -> int:
             failures.append(f"phase34 evidence is not true: {key}")
     if phase34.get("transport_process_fencing_and_external_registry") != "deployment_boundary":
         failures.append("phase34 transport, process fencing, and external registry are not deployment-bound")
+    for key in PHASE35_KEYS:
+        if phase35.get(key) is not True:
+            failures.append(f"phase35 evidence is not true: {key}")
+    if phase35.get("transport_failure_detector_and_process_fencing") != "deployment_boundary":
+        failures.append("phase35 transport, failure detector, and process fencing are not deployment-bound")
     if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
         failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
@@ -169,6 +185,7 @@ def main() -> int:
         "phase31_evidence_checked": PHASE31_KEYS,
         "phase32_evidence_checked": PHASE32_KEYS,
         "phase34_evidence_checked": PHASE34_KEYS,
+        "phase35_evidence_checked": PHASE35_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",

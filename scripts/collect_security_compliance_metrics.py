@@ -63,6 +63,7 @@ def main() -> None:
     phase32_recovery = load_json(root / "benchmarks/phase32_disaster_recovery_metrics.json")
     phase33_recovery = load_json(root / "benchmarks/phase33_durable_recovery_metrics.json")
     phase34_recovery = load_json(root / "benchmarks/phase34_replicated_recovery_metrics.json")
+    phase35_recovery = load_json(root / "benchmarks/phase35_multileader_witness_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -172,6 +173,14 @@ def main() -> None:
             "stale_external_fence_rejected": "passed",
             "replicated_authority_restart_continuity": "passed",
             "dynamic_partition_epoch_chaos_safe": "passed",
+            "multi_leader_proposal_signature_required": "passed",
+            "witness_quorum_arbitration_required": "passed",
+            "one_witness_vote_per_round": "passed",
+            "conflicting_quorum_split_brain_rejected": "passed",
+            "stale_multi_leader_log_rejected": "passed",
+            "fencing_token_domain_bound": "passed",
+            "fencing_authority_registry_pinned": "passed",
+            "fencing_generation_rollback_rejected": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -184,6 +193,7 @@ def main() -> None:
         "phase32_disaster_recovery": phase32_recovery,
         "phase33_durable_recovery": phase33_recovery,
         "phase34_replicated_recovery": phase34_recovery,
+        "phase35_multileader_witness": phase35_recovery,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -374,6 +384,17 @@ def main() -> None:
             "replicated_authority_restart_continuity": True,
             "dynamic_partition_epoch_chaos_safe": True,
             "transport_process_fencing_and_external_registry": "deployment_boundary",
+        },
+        "phase35_multileader_witness": {
+            "multi_leader_proposal_signature_required": True,
+            "witness_quorum_arbitration_required": True,
+            "one_witness_vote_per_round": True,
+            "conflicting_quorum_split_brain_rejected": True,
+            "stale_multi_leader_log_rejected": True,
+            "fencing_token_domain_bound": True,
+            "fencing_authority_registry_pinned": True,
+            "fencing_generation_rollback_rejected": True,
+            "transport_failure_detector_and_process_fencing": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

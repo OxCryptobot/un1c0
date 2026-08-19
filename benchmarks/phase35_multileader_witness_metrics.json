@@ -1,0 +1,36 @@
+{
+  "accepted_fence_epoch": 2,
+  "active_leader_id": "leader-c",
+  "active_region_id": "region-c",
+  "benchmark": "phase35_multileader_witness",
+  "chaos": {
+    "delayed_delivery": "Delayed",
+    "dropped_delivery": "Dropped",
+    "duplicate_delivery_count": 1,
+    "leader_count": 3,
+    "partition_steps": 1,
+    "post_delay_delivery": "Delivered",
+    "safety_passed": true,
+    "split_brain_rejections": 0,
+    "trace_digest": "63a2d3c1db305f8b7ee781b70a9590e401a0a98f847f6ca23a2778408d57afbe"
+  },
+  "cluster_mutation_performed": false,
+  "fencing": {
+    "fence_epochs_monotonic": true,
+    "first_action": "activated",
+    "owner_sequence": [
+      "region-b",
+      "region-c"
+    ],
+    "raw_token_material_emitted": false,
+    "second_action": "activated"
+  },
+  "private_key_persisted": false,
+  "verification_mode": "deterministic_signed_multi_leader_witness_arbitration",
+  "witness_quorum": {
+    "first_decision_witnesses": 3,
+    "one_active_owner_after_each_decision": true,
+    "second_decision_witnesses": 3,
+    "witness_count": 5
+  }
+}
