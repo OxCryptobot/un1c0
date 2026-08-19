@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "fd85cef4d2e3c83b4d9463c848f1dcdcc5c2832f",
+  "commit": "7271efcdf6fd610ce34db24f6aecd39747740d48",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -57,6 +57,7 @@
     "authenticated_partition_benchmark": "passed",
     "authenticated_remote_fence_observation": "passed",
     "authenticated_socket_transport": "passed",
+    "authenticated_transport_envelope_signature_required": "passed",
     "cli_smoke": "passed",
     "clock_skew_boundary_fail_closed": "passed",
     "compaction_quorum_admission": "passed",
@@ -65,7 +66,9 @@
     "concurrent_partition_race_single_commit": "passed",
     "configuration_bound_snapshots": "passed",
     "conflicting_quorum_split_brain_rejected": "passed",
+    "connection_epoch_replay_window_enforced": "passed",
     "crash_retry_queue_retention": "passed",
+    "cross_host_chaos_duplicate_idempotent": "passed",
     "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
     "distinct_observer_quorum_required": "passed",
@@ -75,6 +78,7 @@
     "durable_recovery_snapshot_hash_bound": "passed",
     "durable_term_vote_persistence": "passed",
     "durable_transport_queue": "passed",
+    "durable_witness_reservation_hash_bound": "passed",
     "dynamic_partition_epoch_chaos_safe": "passed",
     "election_timer_safety": "passed",
     "epoch_bound_replay_window": "passed",
@@ -109,6 +113,7 @@
     "partial_staging_cleanup": "passed",
     "per_peer_socket_quotas": "passed",
     "phase11_membership_change": "passed",
+    "protected_write_exact_fence_required": "passed",
     "python_tests": "passed",
     "queue_epoch_binding": "passed",
     "quorum_loss_fences_delivery": "passed",
@@ -129,6 +134,7 @@
     "replicated_recovery_log_hash_bound": "passed",
     "replication_backpressure_boundaries": "passed",
     "replication_flow_control": "passed",
+    "reservation_crash_cutover_atomic": "passed",
     "restart_preserves_pending_authority": "passed",
     "rust_all_targets": "passed",
     "signed_region_failure_observation_required": "passed",
@@ -155,13 +161,15 @@
     "stale_multi_leader_log_rejected": "passed",
     "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
+    "stale_transport_replay_rejected": "passed",
     "tampered_schedule_rejected": "passed",
     "trace_seal_verification": "passed",
     "transfer_crash_recovers_safely": "passed",
+    "transport_receiver_binding_required": "passed",
     "trusted_key_cluster_epoch_binding": "passed",
     "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-19T20:08:25.649482+00:00",
+  "generated_at_utc": "2026-08-19T20:22:50.352909+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -633,6 +641,17 @@
     "stale_multi_leader_log_rejected": true,
     "transport_failure_detector_and_process_fencing": "deployment_boundary",
     "witness_quorum_arbitration_required": true
+  },
+  "phase36_recovery_transport": {
+    "authenticated_transport_envelope_signature_required": true,
+    "connection_epoch_replay_window_enforced": true,
+    "cross_host_chaos_duplicate_idempotent": true,
+    "durable_witness_reservation_hash_bound": true,
+    "kernel_tls_and_distributed_filesystem": "deployment_boundary",
+    "protected_write_exact_fence_required": true,
+    "reservation_crash_cutover_atomic": true,
+    "stale_transport_replay_rejected": true,
+    "transport_receiver_binding_required": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,
