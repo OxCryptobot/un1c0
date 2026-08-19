@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 35.583,
-        "verification_throughput_ops_per_sec": 34108.88431790395
+        "verification_p95_us": 34.392,
+        "verification_throughput_ops_per_sec": 33524.64889417293
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 28.563,
-        "verification_throughput_ops_per_sec": 34606.37065408992
+        "verification_p95_us": 29.815,
+        "verification_throughput_ops_per_sec": 33059.92196260509
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 29.435,
-        "verification_throughput_ops_per_sec": 33304.7828082709
+        "verification_p95_us": 30.166,
+        "verification_throughput_ops_per_sec": 32435.32487444385
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "8756baf3fa937e1434b19398c85bf49d08990114",
+  "commit": "61d214914b03d45221df8a8865c3a939a1441a48",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -130,7 +130,7 @@
     "transfer_crash_recovers_safely": "passed",
     "trusted_key_cluster_epoch_binding": "passed"
   },
-  "generated_at_utc": "2026-08-19T05:17:28.310204+00:00",
+  "generated_at_utc": "2026-08-19T05:19:07.948086+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -216,11 +216,11 @@
       "errors": 0,
       "operations": 128,
       "p50_us": 2,
-      "p95_us": 2,
-      "p99_us": 5,
+      "p95_us": 3,
+      "p99_us": 7,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 255589.52322569955
+      "throughput_ops_per_sec": 196946.7105283403
     },
     {
       "concurrency": 1,
@@ -228,120 +228,120 @@
       "operations": 128,
       "p50_us": 4,
       "p95_us": 6,
-      "p99_us": 32,
+      "p99_us": 8,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 79240.87244200558
+      "throughput_ops_per_sec": 177917.14620897482
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
       "p50_us": 11,
-      "p95_us": 54,
-      "p99_us": 101,
+      "p95_us": 21,
+      "p99_us": 126,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 85097.81095853708
+      "throughput_ops_per_sec": 95979.07656130963
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 10,
-      "p95_us": 11,
-      "p99_us": 35,
+      "p50_us": 11,
+      "p95_us": 19,
+      "p99_us": 325,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 89913.5284737881
-    },
-    {
-      "concurrency": 4,
-      "errors": 0,
-      "operations": 512,
-      "p50_us": 5,
-      "p95_us": 61,
-      "p99_us": 264,
-      "path": "lease_fast_path",
-      "successful": 512,
-      "throughput_ops_per_sec": 87215.36830181288
+      "throughput_ops_per_sec": 88088.81003716936
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 119,
-      "p99_us": 352,
+      "p95_us": 126,
+      "p99_us": 701,
+      "path": "lease_fast_path",
+      "successful": 512,
+      "throughput_ops_per_sec": 87621.75059358601
+    },
+    {
+      "concurrency": 4,
+      "errors": 0,
+      "operations": 512,
+      "p50_us": 11,
+      "p95_us": 47,
+      "p99_us": 464,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 91140.59968378484
+      "throughput_ops_per_sec": 86415.57316647927
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 381,
-      "p99_us": 1037,
+      "p95_us": 316,
+      "p99_us": 1203,
       "path": "lease_fast_path",
       "successful": 1024,
-      "throughput_ops_per_sec": 91028.89767471836
+      "throughput_ops_per_sec": 95444.46548862348
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 385,
-      "p99_us": 1126,
+      "p95_us": 193,
+      "p99_us": 1355,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 88428.08797316691
+      "throughput_ops_per_sec": 86777.08712029728
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 881,
-      "p99_us": 2479,
+      "p95_us": 482,
+      "p99_us": 2749,
       "path": "lease_fast_path",
       "successful": 2048,
-      "throughput_ops_per_sec": 86200.57577607245
+      "throughput_ops_per_sec": 90724.87045126408
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 709,
-      "p99_us": 2576,
+      "p95_us": 503,
+      "p99_us": 3113,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 88194.75710591144
+      "throughput_ops_per_sec": 86826.12771156768
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1655,
-      "p99_us": 4017,
+      "p95_us": 1355,
+      "p99_us": 4580,
       "path": "lease_fast_path",
       "successful": 4096,
-      "throughput_ops_per_sec": 94487.84531287808
+      "throughput_ops_per_sec": 89050.50550728242
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1389,
-      "p99_us": 5606,
+      "p95_us": 1370,
+      "p99_us": 4537,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 91633.67336152514
+      "throughput_ops_per_sec": 91856.90344996231
     }
   ],
   "phase15_election_timers": {
