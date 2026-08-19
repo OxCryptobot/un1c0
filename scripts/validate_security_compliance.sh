@@ -91,6 +91,8 @@ printf '%s\n' '== Phase 36 authenticated recovery transport and durable reservat
 scripts/validate_phase36_recovery_transport.sh >"$TMP_DIR/phase36-recovery-transport.log"
 printf '%s\n' '== Phase 37 secure telemetry, failover orchestration, and epoch-churn fuzz =='
 scripts/validate_phase37_telemetry_failover.sh >"$TMP_DIR/phase37-telemetry-failover.log"
+printf '%s\n' '== Phase 38 external-fencing supervision and consumer enforcement =='
+scripts/validate_phase38_external_fencing_supervision.sh >"$TMP_DIR/phase38-external-fencing-supervision.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
