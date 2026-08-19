@@ -607,6 +607,7 @@ impl FencingSupervisionSnapshot {
                 "supervision snapshot cardinality exceeds bound".into(),
             ));
         }
+        validate_journal(&self.journal)?;
         for acknowledgement in self.consumer_acknowledgements.values() {
             acknowledgement.validate_shape()?;
         }
@@ -1050,6 +1051,29 @@ fn verify_signature(
     trusted_key
         .verify(payload, &signature)
         .map_err(|_| FencingSupervisionError::Rejected(format!("{label} signature verification")))
+}
+
+fn validate_journal(journal: &[SupervisionJournalEntry]) -> Result<(), FencingSupervisionError> {
+    let mut previous = "0".repeat(64);
+    for (index, entry) in journal.iter().enumerate() {
+        if entry.sequence != index as u64 + 1
+            || entry.previous_hash != previous
+            || entry.evidence_hash.len() != MAX_HASH_BYTES
+            || !entry
+                .evidence_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+            || entry.evidence_type.is_empty()
+            || entry.evidence_type.len() > MAX_IDENTIFIER_BYTES
+            || entry.evidence_type.chars().any(char::is_control)
+        {
+            return Err(FencingSupervisionError::Rejected(
+                "supervision journal chain or evidence type is invalid".into(),
+            ));
+        }
+        previous = entry.evidence_hash.clone();
+    }
+    Ok(())
 }
 
 fn snapshot_hash(
