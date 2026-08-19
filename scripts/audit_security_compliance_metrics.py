@@ -7,11 +7,13 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 121
+EXPECTED_GATE_COUNT = 129
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
     "phase16_replication_flow_control.transport_or_background_threads",
+    "phase37_telemetry_failover.secret_material_recorded",
+    "phase37_telemetry_failover.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -25,6 +27,19 @@ REQUIRED_PHASES = {
         "cross_host_chaos_duplicate_idempotent",
         "stale_transport_replay_rejected",
         "kernel_tls_and_distributed_filesystem",
+    ],
+    "phase37_telemetry_failover": [
+        "signed_canonical_events",
+        "producer_registry_key_pinning",
+        "epoch_sequence_frontier",
+        "bounded_labels_and_metrics",
+        "append_only_hash_chain",
+        "freshness_gate_blocks_promotion",
+        "typed_idempotent_orchestration",
+        "transport_and_reservation_fuzz_panics",
+        "trace_storage_bounded",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
     ],
     "phase35_multileader_witness": [
         "multi_leader_proposal_signature_required",
@@ -304,6 +319,8 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("secret_material_recorded") is False, failures, "secret material flag is not false")
     check(notes.get("cluster_mutation_performed") is False, failures, "cluster mutation flag is not false")
     check(notes.get("transport_mode") == "Ed25519 envelope identity/term/nonce binding", failures, "unexpected transport security note")
+    check(notes.get("telemetry_mode") == "signed bounded hash-chained journal with freshness gate", failures, "unexpected telemetry security note")
+    check(notes.get("fuzz_mode") == "deterministic epoch churn with sanitized counters", failures, "unexpected fuzz security note")
 
     return {
         "artifact": str(artifact),
