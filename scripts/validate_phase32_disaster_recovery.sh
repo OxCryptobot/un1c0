@@ -9,4 +9,4 @@ if [[ -x /home/ubuntu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/car
 fi
 
 cargo test --test phase32_disaster_recovery_integration -- --nocapture
-printf '%s\n' 'Phase 32 disaster-recovery gate passed: signed observations, distinct quorum, snapshot binding, higher-term promotion, fencing, single-active invariant, idempotence, and stale-state rejection'
+printf '%s\n' 'Phase 32 disaster-recovery gate passed: signed observations, distinct quorum, failure-detection sequencing, snapshot binding, higher-term promotion, pending-proposal protection, terminal-cycle protection, exact committed replay, fencing, single-active invariant, idempotence, and stale-state rejection'

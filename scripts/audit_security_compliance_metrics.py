@@ -178,6 +178,10 @@ REQUIRED_PHASES = {
         "single_active_region_invariant",
         "idempotent_failover_evidence",
         "stale_or_conflicting_failover_rejected",
+        "failure_detection_sequence_required",
+        "conflicting_pending_proposal_rejected",
+        "terminal_recovery_cycle_protected",
+        "committed_proposal_identity_bound",
         "production_cloud_authority",
     ],
 }

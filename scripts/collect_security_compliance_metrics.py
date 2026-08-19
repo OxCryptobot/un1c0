@@ -329,6 +329,10 @@ def main() -> None:
             "single_active_region_invariant": True,
             "idempotent_failover_evidence": True,
             "stale_or_conflicting_failover_rejected": True,
+            "failure_detection_sequence_required": True,
+            "conflicting_pending_proposal_rejected": True,
+            "terminal_recovery_cycle_protected": True,
+            "committed_proposal_identity_bound": True,
             "production_cloud_authority": "deployment_boundary",
         },
         "security_notes": {

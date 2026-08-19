@@ -34,7 +34,7 @@ The compliance total increases from 82 to 90 with these eight correctness gates:
 
 ## Test and benchmark evidence
 
-The integration suite contains nine tests for full quorum promotion, quorum wait without mutation, identical observation idempotence, conflicting observation rejection, signature tampering, snapshot mismatch, stale term/epoch, self-observation rejection, and committed failover idempotence. The benchmark emits non-secret evidence showing one quorum wait, two distinct observers, promotion to `region-b`, owner term `2`, ownership epoch `2`, old-region fencing through the safety report, eight ordered events, a trace digest, and no private-key persistence.
+The integration suite contains sixteen tests for full quorum promotion, quorum wait without mutation, identical observation idempotence, unknown and wrong-cluster observer rejection, local failure-detection sequencing, conflicting observation rejection, signature tampering, snapshot mismatch, stale term/epoch, unprepared commit rejection, conflicting prepared-promotion rejection, terminal recovery-cycle protection, exact committed-proposal replay identity, self-observation rejection, and committed failover idempotence. The benchmark emits non-secret evidence showing one quorum wait, two distinct observers, promotion to `region-b`, owner term `2`, ownership epoch `2`, old-region fencing through the safety report, eight ordered events, a trace digest, and no private-key persistence.
 
 ## Production boundaries
 

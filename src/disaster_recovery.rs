@@ -267,6 +267,7 @@ pub struct DisasterRecoveryController {
     failure_tick: Option<u64>,
     observations: BTreeMap<String, RegionFailureObservation>,
     pending_proposal: Option<FailoverProposal>,
+    committed_proposal: Option<FailoverProposal>,
     events: Vec<RecoveryEvent>,
     next_event_sequence: u64,
     invariant_failures: Vec<String>,
@@ -299,6 +300,7 @@ impl DisasterRecoveryController {
             failure_tick: None,
             observations: BTreeMap::new(),
             pending_proposal: None,
+            committed_proposal: None,
             events: Vec::new(),
             next_event_sequence: 0,
             invariant_failures: Vec::new(),
@@ -365,6 +367,14 @@ impl DisasterRecoveryController {
                 "only the active region can enter failure detection".into(),
             ));
         }
+        if matches!(
+            self.phase,
+            RecoveryPhase::PromotionPrepared | RecoveryPhase::Committed
+        ) {
+            return Err(DisasterRecoveryError::StaleProposal(
+                "recovery cycle already has a prepared or committed promotion".into(),
+            ));
+        }
         if observed_tick > self.config.max_failover_ticks {
             return Err(DisasterRecoveryError::InvalidInput(
                 "failure tick exceeds failover bound".into(),
@@ -412,6 +422,11 @@ impl DisasterRecoveryController {
                 "failure observation does not bind to active state".into(),
             ));
         }
+        if self.failure_tick.is_none() {
+            return Err(DisasterRecoveryError::BindingRejected(
+                "local failure detection has not been recorded".into(),
+            ));
+        }
         if observation.observer_id == observation.region_id {
             return Err(DisasterRecoveryError::BindingRejected(
                 "failed region cannot act as its own observer".into(),
@@ -433,7 +448,9 @@ impl DisasterRecoveryController {
         }
         self.observations
             .insert(observation.observer_id.clone(), observation.clone());
-        self.phase = if self.observations.len() >= self.config.required_observers() {
+        self.phase = if self.pending_proposal.is_some() {
+            RecoveryPhase::PromotionPrepared
+        } else if self.observations.len() >= self.config.required_observers() {
             RecoveryPhase::AwaitingObserverQuorum
         } else {
             RecoveryPhase::DetectingFailure
@@ -458,13 +475,20 @@ impl DisasterRecoveryController {
         validate_identifier(candidate_region_id, "candidate region")?;
         validate_digest(snapshot_hash)?;
         if self.phase == RecoveryPhase::Committed && candidate_region_id == self.active_region_id {
-            return Ok(FailoverAction::AlreadyCommitted(FailoverProposal {
-                previous_region_id: candidate_region_id.to_string(),
-                candidate_region_id: candidate_region_id.to_string(),
-                owner_term: self.active_owner_term,
-                ownership_epoch: self.active_ownership_epoch,
-                snapshot_hash: self.active_snapshot_hash.clone(),
-            }));
+            let committed = self.committed_proposal.as_ref().ok_or_else(|| {
+                DisasterRecoveryError::InvariantViolation(
+                    "committed phase is missing its proposal identity".into(),
+                )
+            })?;
+            if committed.owner_term == owner_term
+                && committed.ownership_epoch == ownership_epoch
+                && committed.snapshot_hash == snapshot_hash
+            {
+                return Ok(FailoverAction::AlreadyCommitted(committed.clone()));
+            }
+            return Err(DisasterRecoveryError::StaleProposal(
+                "committed promotion replay does not match its proposal identity".into(),
+            ));
         }
         let required = self.config.required_observers();
         if self.observations.len() < required {
@@ -497,6 +521,14 @@ impl DisasterRecoveryController {
             ownership_epoch,
             snapshot_hash: snapshot_hash.to_string(),
         };
+        if let Some(existing) = &self.pending_proposal {
+            if existing != &proposal {
+                return Err(DisasterRecoveryError::StaleProposal(
+                    "a conflicting promotion is already prepared".into(),
+                ));
+            }
+            return Ok(FailoverAction::Promote(proposal));
+        }
         self.pending_proposal = Some(proposal.clone());
         self.phase = RecoveryPhase::PromotionPrepared;
         self.record_event(
@@ -513,12 +545,13 @@ impl DisasterRecoveryController {
         &mut self,
         proposal: FailoverProposal,
     ) -> Result<FailoverAction, DisasterRecoveryError> {
-        if self.phase == RecoveryPhase::Committed
-            && proposal.candidate_region_id == self.active_region_id
-            && proposal.owner_term == self.active_owner_term
-            && proposal.ownership_epoch == self.active_ownership_epoch
-        {
-            return Ok(FailoverAction::AlreadyCommitted(proposal));
+        if self.phase == RecoveryPhase::Committed {
+            if self.committed_proposal.as_ref() == Some(&proposal) {
+                return Ok(FailoverAction::AlreadyCommitted(proposal));
+            }
+            return Err(DisasterRecoveryError::StaleProposal(
+                "committed promotion replay does not match its proposal identity".into(),
+            ));
         }
         if self.pending_proposal.as_ref() != Some(&proposal) {
             return Err(DisasterRecoveryError::StaleProposal(
@@ -557,6 +590,7 @@ impl DisasterRecoveryController {
         self.active_ownership_epoch = proposal.ownership_epoch;
         self.active_snapshot_hash = proposal.snapshot_hash.clone();
         self.pending_proposal = None;
+        self.committed_proposal = Some(proposal.clone());
         self.phase = RecoveryPhase::Committed;
         self.record_event(
             RecoveryEventKind::PromotionCommitted,

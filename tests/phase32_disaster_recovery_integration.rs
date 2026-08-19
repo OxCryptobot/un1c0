@@ -304,3 +304,197 @@ fn committed_failover_is_idempotent_and_never_has_two_active_regions() {
         .count();
     assert_eq!(active_count, 1);
 }
+
+#[test]
+fn unknown_observer_is_rejected_before_state_mutation() {
+    let observer_b = key(60);
+    let observer_c = key(61);
+    let observer_d = key(62);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    let before = controller.report();
+
+    let error = controller
+        .ingest_failure_observation(observation("region-d", &observer_d, 19))
+        .unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::BindingRejected(_)));
+    assert_eq!(controller.report(), before);
+}
+
+#[test]
+fn wrong_cluster_observation_is_rejected_before_state_mutation() {
+    let observer_b = key(63);
+    let observer_c = key(64);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    let before = controller.report();
+    let observation = RegionFailureObservation::sign(
+        "another-cluster",
+        "region-a",
+        "region-b",
+        1,
+        1,
+        20,
+        SNAPSHOT,
+        "active region unreachable",
+        &observer_b,
+    )
+    .unwrap();
+
+    let error = controller
+        .ingest_failure_observation(observation)
+        .unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::BindingRejected(_)));
+    assert_eq!(controller.report(), before);
+}
+
+#[test]
+fn observer_evidence_requires_local_failure_detection() {
+    let observer_b = key(65);
+    let observer_c = key(66);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    let before = controller.report();
+
+    let error = controller
+        .ingest_failure_observation(observation("region-b", &observer_b, 21))
+        .unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::BindingRejected(_)));
+    assert_eq!(controller.report(), before);
+}
+
+#[test]
+fn unprepared_commit_cannot_bypass_quorum_or_fencing() {
+    let mut controller = controller();
+    let proposal = FailoverProposal {
+        previous_region_id: "region-a".into(),
+        candidate_region_id: "region-b".into(),
+        owner_term: 2,
+        ownership_epoch: 2,
+        snapshot_hash: SNAPSHOT.into(),
+    };
+
+    let error = controller.commit_promotion(proposal).unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::StaleProposal(_)));
+    assert_eq!(controller.report().active_region_id, "region-a");
+    assert!(!controller.region("region-a").unwrap().fenced);
+    assert!(controller.region("region-a").unwrap().active);
+    assert!(!controller.region("region-b").unwrap().active);
+}
+
+#[test]
+fn conflicting_candidate_cannot_replace_prepared_promotion() {
+    let observer_b = key(67);
+    let observer_c = key(68);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    controller
+        .record_region_failure("region-a", 22, "partition detected")
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-b", &observer_b, 22))
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-c", &observer_c, 22))
+        .unwrap();
+
+    let proposal = match controller
+        .prepare_promotion("region-b", 2, 2, SNAPSHOT)
+        .unwrap()
+    {
+        FailoverAction::Promote(proposal) => proposal,
+        other => panic!("expected promotion, got {other:?}"),
+    };
+    let error = controller
+        .prepare_promotion("region-c", 2, 2, SNAPSHOT)
+        .unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::StaleProposal(_)));
+    assert_eq!(controller.report().active_region_id, "region-a");
+    assert!(matches!(
+        controller.commit_promotion(proposal).unwrap(),
+        FailoverAction::Committed(_)
+    ));
+    assert!(controller.region("region-b").unwrap().active);
+    assert!(!controller.region("region-c").unwrap().active);
+}
+
+#[test]
+fn prepared_or_committed_recovery_cannot_be_reset_by_new_failure_detection() {
+    let observer_b = key(69);
+    let observer_c = key(70);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    controller
+        .record_region_failure("region-a", 23, "partition detected")
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-b", &observer_b, 23))
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-c", &observer_c, 23))
+        .unwrap();
+    let proposal = match controller
+        .prepare_promotion("region-b", 2, 2, SNAPSHOT)
+        .unwrap()
+    {
+        FailoverAction::Promote(proposal) => proposal,
+        other => panic!("expected promotion, got {other:?}"),
+    };
+
+    let prepared_error = controller
+        .record_region_failure("region-a", 24, "repeated partition")
+        .unwrap_err();
+    assert!(matches!(
+        prepared_error,
+        DisasterRecoveryError::StaleProposal(_)
+    ));
+    controller.commit_promotion(proposal.clone()).unwrap();
+
+    let committed_error = controller
+        .record_region_failure("region-b", 25, "new failure")
+        .unwrap_err();
+    assert!(matches!(
+        committed_error,
+        DisasterRecoveryError::StaleProposal(_)
+    ));
+    assert_eq!(controller.report().active_region_id, "region-b");
+    assert!(controller.report().safety_passed);
+}
+
+#[test]
+fn committed_replay_requires_exact_original_proposal_identity() {
+    let observer_b = key(71);
+    let observer_c = key(72);
+    let mut controller = controller();
+    register_observers(&mut controller, &observer_b, &observer_c);
+    controller
+        .record_region_failure("region-a", 26, "partition detected")
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-b", &observer_b, 26))
+        .unwrap();
+    controller
+        .ingest_failure_observation(observation("region-c", &observer_c, 26))
+        .unwrap();
+    let proposal = match controller
+        .prepare_promotion("region-b", 2, 2, SNAPSHOT)
+        .unwrap()
+    {
+        FailoverAction::Promote(proposal) => proposal,
+        other => panic!("expected promotion, got {other:?}"),
+    };
+    controller.commit_promotion(proposal.clone()).unwrap();
+
+    let mut altered = proposal;
+    altered.owner_term = 3;
+    let error = controller.commit_promotion(altered).unwrap_err();
+
+    assert!(matches!(error, DisasterRecoveryError::StaleProposal(_)));
+    assert_eq!(controller.report().active_region_id, "region-b");
+    assert!(controller.report().safety_passed);
+}
