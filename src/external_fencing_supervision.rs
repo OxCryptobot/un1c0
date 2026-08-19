@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use thiserror::Error;
 
-pub const FENCING_HEARTBEAT_DOMAIN: &str = "un1c0/fencing-authority-heartbeat/v1";
+pub const FENCING_HEARTBEAT_DOMAIN: &str = "un1c0/fencing-authority-heartbeat/v2";
 pub const FENCE_CONSUMER_ACK_DOMAIN: &str = "un1c0/fence-consumer-ack/v1";
 const MAX_IDENTIFIER_BYTES: usize = 128;
 const MAX_HASH_BYTES: usize = 64;
@@ -115,6 +115,7 @@ pub struct FencingAuthorityHeartbeat {
     pub cluster_id: String,
     pub resource_id: String,
     pub authority_id: String,
+    pub owner_region_id: String,
     pub membership_epoch: u64,
     pub fence_epoch: u64,
     pub log_index: u64,
@@ -134,6 +135,7 @@ struct HeartbeatPayload<'a> {
     cluster_id: &'a str,
     resource_id: &'a str,
     authority_id: &'a str,
+    owner_region_id: &'a str,
     membership_epoch: u64,
     fence_epoch: u64,
     log_index: u64,
@@ -150,6 +152,7 @@ impl FencingAuthorityHeartbeat {
         cluster_id: &str,
         resource_id: &str,
         authority_id: &str,
+        owner_region_id: &str,
         membership_epoch: u64,
         fence_epoch: u64,
         log_index: u64,
@@ -161,10 +164,11 @@ impl FencingAuthorityHeartbeat {
     ) -> Result<Self, FencingSupervisionError> {
         let mut heartbeat = Self {
             domain: FENCING_HEARTBEAT_DOMAIN.to_string(),
-            protocol_version: 1,
+            protocol_version: 2,
             cluster_id: cluster_id.to_string(),
             resource_id: resource_id.to_string(),
             authority_id: authority_id.to_string(),
+            owner_region_id: owner_region_id.to_string(),
             membership_epoch,
             fence_epoch,
             log_index,
@@ -218,7 +222,7 @@ impl FencingAuthorityHeartbeat {
     }
 
     fn validate_shape(&self) -> Result<(), FencingSupervisionError> {
-        if self.domain != FENCING_HEARTBEAT_DOMAIN || self.protocol_version != 1 {
+        if self.domain != FENCING_HEARTBEAT_DOMAIN || self.protocol_version != 2 {
             return Err(FencingSupervisionError::Rejected(
                 "authority heartbeat domain or protocol is invalid".into(),
             ));
@@ -226,6 +230,7 @@ impl FencingAuthorityHeartbeat {
         validate_identifier(&self.cluster_id, "cluster")?;
         validate_identifier(&self.resource_id, "resource")?;
         validate_identifier(&self.authority_id, "authority")?;
+        validate_identifier(&self.owner_region_id, "owner region")?;
         validate_hash(&self.token_hash, "token hash")?;
         validate_hash(&self.state_hash, "state hash")?;
         validate_hash(&self.event_hash, "event hash")?;
@@ -254,6 +259,7 @@ impl FencingAuthorityHeartbeat {
             cluster_id: &self.cluster_id,
             resource_id: &self.resource_id,
             authority_id: &self.authority_id,
+            owner_region_id: &self.owner_region_id,
             membership_epoch: self.membership_epoch,
             fence_epoch: self.fence_epoch,
             log_index: self.log_index,
@@ -273,6 +279,7 @@ impl FencingAuthorityHeartbeat {
             &self.cluster_id,
             &self.resource_id,
             &self.authority_id,
+            &self.owner_region_id,
             self.membership_epoch,
             self.fence_epoch,
             self.log_index,
@@ -798,6 +805,7 @@ impl FencingSupervisor {
             || acknowledgement.membership_epoch != authority.membership_epoch
             || acknowledgement.fence_epoch != authority.fence_epoch
             || acknowledgement.token_hash != authority.token_hash
+            || acknowledgement.owner_region_id != authority.owner_region_id
         {
             return Err(FencingSupervisionError::Rejected(
                 "consumer acknowledgement is not bound to the current authority fence".into(),
@@ -888,6 +896,7 @@ impl FencingSupervisor {
                         || ack.membership_epoch != authority.membership_epoch
                         || ack.fence_epoch != authority.fence_epoch
                         || ack.token_hash != authority.token_hash
+                        || ack.owner_region_id != authority.owner_region_id
                 })
             {
                 FencingSupervisionStatus::GenerationMismatch

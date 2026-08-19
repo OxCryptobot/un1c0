@@ -51,6 +51,7 @@ fn main() {
         "cluster-a",
         "resource-a",
         "authority-a",
+        "region-b",
         3,
         7,
         9,

@@ -60,6 +60,7 @@ fn heartbeat(
         "cluster-a",
         "resource-a",
         "authority-a",
+        "region-b",
         membership_epoch,
         fence_epoch,
         log_index,
@@ -93,6 +94,30 @@ fn acknowledgement(
         observed_tick,
         50,
         outcome,
+        consumer_key,
+    )
+    .unwrap()
+}
+
+fn acknowledgement_in_region(
+    consumer_id: &str,
+    consumer_kind: FenceConsumerKind,
+    consumer_key: &SigningKey,
+    owner_region_id: &str,
+) -> FenceConsumerAcknowledgement {
+    FenceConsumerAcknowledgement::sign(
+        "cluster-a",
+        "resource-a",
+        "authority-a",
+        consumer_id,
+        consumer_kind,
+        &"a".repeat(64),
+        owner_region_id,
+        3,
+        7,
+        105,
+        50,
+        FenceApplicationOutcome::Applied,
         consumer_key,
     )
     .unwrap()
@@ -192,6 +217,28 @@ fn exact_consumer_coverage_is_required_for_ready() {
         FencingSupervisionStatus::Ready
     );
     assert!(supervisor.journal_integrity());
+}
+
+#[test]
+fn acknowledgement_owner_region_must_match_authority() {
+    let (mut supervisor, authority_key, gateway_key, _) = make_supervisor(8);
+    supervisor
+        .ingest_heartbeat(heartbeat(&authority_key, 3, 7, 9, 100, 50, 'a'), 105)
+        .unwrap();
+    let mismatched = acknowledgement_in_region(
+        "gateway-a",
+        FenceConsumerKind::WriteGateway,
+        &gateway_key,
+        "region-a",
+    );
+    assert!(matches!(
+        supervisor.ingest_consumer_acknowledgement(mismatched, 105),
+        Err(FencingSupervisionError::Rejected(_))
+    ));
+    assert_eq!(
+        supervisor.evaluate(105).status,
+        FencingSupervisionStatus::MissingConsumer
+    );
 }
 
 #[test]
