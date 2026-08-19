@@ -1,0 +1,31 @@
+{
+  "benchmark": "phase33_durable_recovery",
+  "cluster_mutation_performed": false,
+  "concurrent_partition_race": {
+    "arbiter_active_region": "region-b",
+    "arbiter_safety_passed": true,
+    "base_trace_digest": "49864b150364b99c17c64a31dbb019bf75b25f6438d24b926100a5dedb4adecc",
+    "branch_b_safety_passed": true,
+    "branch_c_safety_passed": true,
+    "branches_have_distinct_owners": true
+  },
+  "durable_snapshot": {
+    "events": 8,
+    "membership_epoch": 1,
+    "pending_or_committed_identity_preserved": true,
+    "state_hash_bound": true
+  },
+  "membership_epoch": {
+    "current_epoch": 1,
+    "observations_bound_to_epoch": true
+  },
+  "private_key_persisted": false,
+  "quorum": {
+    "first_observer_reached_quorum": false,
+    "observer_count": 2,
+    "required_observers": 2,
+    "second_observer_reached_quorum": true
+  },
+  "trace_digest": "fecaa74b8eb4331617770b6b4f03ab9c3f05cc112e22ddde3cfe412f0d937c74",
+  "verification_mode": "deterministic_local_atomic_snapshot_and_membership_epoch"
+}

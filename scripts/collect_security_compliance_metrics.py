@@ -61,6 +61,7 @@ def main() -> None:
     phase31_replay = load_json(root / "benchmarks/phase31_secure_replay_metrics.json")
     phase31_seal_overhead = load_json(root / "benchmarks/phase31_trace_seal_overhead.json")
     phase32_recovery = load_json(root / "benchmarks/phase32_disaster_recovery_metrics.json")
+    phase33_recovery = load_json(root / "benchmarks/phase33_durable_recovery_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -155,6 +156,13 @@ def main() -> None:
             "single_active_region_invariant": "passed",
             "idempotent_failover_evidence": "passed",
             "stale_or_conflicting_failover_rejected": "passed",
+            "durable_recovery_snapshot_hash_bound": "passed",
+            "atomic_recovery_cutover": "passed",
+            "partial_staging_cleanup": "passed",
+            "restart_preserves_pending_authority": "passed",
+            "observer_membership_epoch_bound": "passed",
+            "stale_membership_evidence_rejected": "passed",
+            "concurrent_partition_race_single_commit": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -165,6 +173,7 @@ def main() -> None:
         "phase31_secure_replay": phase31_replay,
         "phase31_trace_seal_overhead": phase31_seal_overhead,
         "phase32_disaster_recovery": phase32_recovery,
+        "phase33_durable_recovery": phase33_recovery,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -334,6 +343,16 @@ def main() -> None:
             "terminal_recovery_cycle_protected": True,
             "committed_proposal_identity_bound": True,
             "production_cloud_authority": "deployment_boundary",
+        },
+        "phase33_durable_recovery": {
+            "snapshot_hash_bound": True,
+            "atomic_cutover": True,
+            "partial_staging_cleanup": True,
+            "restart_preserves_pending_authority": True,
+            "observer_membership_epoch_bound": True,
+            "stale_membership_evidence_rejected": True,
+            "concurrent_partition_race_single_commit": True,
+            "durable_storage_and_external_fencing": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

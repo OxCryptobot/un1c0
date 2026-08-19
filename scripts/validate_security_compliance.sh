@@ -81,6 +81,8 @@ printf '%s\n' '== Phase 31 secure deterministic replay =='
 scripts/validate_phase31_secure_replay.sh >"$TMP_DIR/phase31-secure-replay.log"
 printf '%s\n' '== Phase 32 disaster recovery and automated consensus failover =='
 scripts/validate_phase32_disaster_recovery.sh >"$TMP_DIR/phase32-disaster-recovery.log"
+printf '%s\n' '== Phase 33 durable recovery and observer-membership epochs =='
+scripts/validate_phase33_durable_recovery.sh >"$TMP_DIR/phase33-durable-recovery.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
