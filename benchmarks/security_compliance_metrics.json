@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "3cc99015ce3f22e61c68bb1442787cf855c570f0",
+  "commit": "b77a58205353d44cc247c5484e03da3bbf71e332",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -58,6 +58,7 @@
     "authenticated_remote_fence_observation": "passed",
     "authenticated_socket_transport": "passed",
     "authenticated_transport_envelope_signature_required": "passed",
+    "authority_owner_region_signed": "passed",
     "cli_smoke": "passed",
     "clock_skew_boundary_fail_closed": "passed",
     "compaction_quorum_admission": "passed",
@@ -72,6 +73,7 @@
     "cross_host_chaos_duplicate_idempotent": "passed",
     "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
+    "directory_fsync_latency_recorded": "passed",
     "distinct_observer_quorum_required": "passed",
     "durable_compaction_manifests": "passed",
     "durable_consensus_state_recovery": "passed",
@@ -97,6 +99,7 @@
     "fencing_epoch_monotonicity": "passed",
     "fencing_generation_rollback_rejected": "passed",
     "fencing_token_domain_bound": "passed",
+    "file_fsync_latency_recorded": "passed",
     "follower_triggered_snapshot_requests": "passed",
     "helm_fail_closed": "passed",
     "higher_term_epoch_promotion_required": "passed",
@@ -118,6 +121,7 @@
     "ownership_transfer_clears_fence": "passed",
     "partial_staging_cleanup": "passed",
     "per_peer_socket_quotas": "passed",
+    "persistence_bytes_accounted": "passed",
     "phase11_membership_change": "passed",
     "protected_write_exact_fence_required": "passed",
     "python_tests": "passed",
@@ -143,8 +147,10 @@
     "replication_flow_control": "passed",
     "reservation_crash_cutover_atomic": "passed",
     "reservation_store_fuzz_no_panic": "passed",
+    "resource_budget_fail_closed": "passed",
     "restart_preserves_pending_authority": "passed",
     "rust_all_targets": "passed",
+    "sanitized_durability_evidence": "passed",
     "signed_region_failure_observation_required": "passed",
     "signed_replay_manifest_required": "passed",
     "signer_rotation_revocation": "passed",
@@ -164,6 +170,7 @@
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed",
     "split_brain_commit_exclusion": "passed",
+    "staging_recovery_bounded": "passed",
     "stale_authority_blocks_readiness": "passed",
     "stale_external_fence_rejected": "passed",
     "stale_membership_evidence_rejected": "passed",
@@ -183,9 +190,10 @@
     "transport_receiver_binding_required": "passed",
     "transport_receiver_epoch_churn_safe": "passed",
     "trusted_key_cluster_epoch_binding": "passed",
+    "valid_path_resource_metrics": "passed",
     "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-19T21:21:45.931645+00:00",
+  "generated_at_utc": "2026-08-19T22:35:31.244572+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -694,6 +702,18 @@
     "signed_authority_heartbeat": true,
     "stale_authority_blocks_readiness": true
   },
+  "phase39_resource_durability": {
+    "authority_owner_region_signed": true,
+    "cluster_mutation_performed": false,
+    "directory_fsync_latency_recorded": true,
+    "file_fsync_latency_recorded": true,
+    "persistence_bytes_accounted": true,
+    "resource_budget_fail_closed": true,
+    "sanitized_durability_evidence": true,
+    "secret_material_recorded": false,
+    "staging_recovery_bounded": true,
+    "valid_path_resource_metrics": true
+  },
   "repository_search_before_after": {
     "baseline_errors": 0,
     "baseline_p95_ms": 37.202256,
@@ -710,6 +730,7 @@
     "external_sink_mode": "durable file-backed idempotent outbox",
     "fencing_supervision_mode": "signed authority heartbeat plus exact consumer acknowledgements",
     "fuzz_mode": "deterministic epoch churn with sanitized counters",
+    "resource_durability_mode": "bounded local fsync, atomic rename, and process-resource instrumentation",
     "secret_material_recorded": false,
     "snapshot_mode": "atomic durable JSON with hash validation",
     "telemetry_mode": "signed bounded hash-chained journal with freshness gate",
