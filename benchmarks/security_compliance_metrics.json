@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "03dba2ef3e330a70ac64f6687cff486b8065e81b",
+  "commit": "d1bfa1864a680ef90d396d6111e18e23499d65f9",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -138,7 +138,7 @@
     "transfer_crash_recovers_safely": "passed",
     "trusted_key_cluster_epoch_binding": "passed"
   },
-  "generated_at_utc": "2026-08-19T05:34:23.809623+00:00",
+  "generated_at_utc": "2026-08-19T05:48:45.551331+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -565,7 +565,10 @@
     "wait_action": "AwaitingQuorum { observed: 1, required: 2 }"
   },
   "phase32_disaster_recovery_failover": {
+    "committed_proposal_identity_bound": true,
+    "conflicting_pending_proposal_rejected": true,
     "distinct_observer_quorum_required": true,
+    "failure_detection_sequence_required": true,
     "higher_term_epoch_promotion_required": true,
     "idempotent_failover_evidence": true,
     "old_region_fenced_on_commit": true,
@@ -573,7 +576,8 @@
     "signed_region_failure_observation_required": true,
     "single_active_region_invariant": true,
     "snapshot_hash_binding_required": true,
-    "stale_or_conflicting_failover_rejected": true
+    "stale_or_conflicting_failover_rejected": true,
+    "terminal_recovery_cycle_protected": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,

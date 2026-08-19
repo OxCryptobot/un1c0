@@ -2,7 +2,7 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "benchmark_concurrency": 8,
   "cluster_mutation_performed": false,
-  "commit": "03dba2ef3e330a70ac64f6687cff486b8065e81b",
+  "commit": "d1bfa1864a680ef90d396d6111e18e23499d65f9",
   "commit_is_current_or_ancestor": true,
   "expected_gate_count": 90,
   "failures": [],
