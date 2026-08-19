@@ -308,6 +308,7 @@ pub struct DisasterRecoveryReport {
     pub events: usize,
 }
 
+#[derive(Debug)]
 pub struct DisasterRecoveryController {
     config: DisasterRecoveryConfig,
     regions: BTreeMap<String, RegionStatus>,

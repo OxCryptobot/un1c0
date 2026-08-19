@@ -62,6 +62,7 @@ def main() -> None:
     phase31_seal_overhead = load_json(root / "benchmarks/phase31_trace_seal_overhead.json")
     phase32_recovery = load_json(root / "benchmarks/phase32_disaster_recovery_metrics.json")
     phase33_recovery = load_json(root / "benchmarks/phase33_durable_recovery_metrics.json")
+    phase34_recovery = load_json(root / "benchmarks/phase34_replicated_recovery_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -163,6 +164,14 @@ def main() -> None:
             "observer_membership_epoch_bound": "passed",
             "stale_membership_evidence_rejected": "passed",
             "concurrent_partition_race_single_commit": "passed",
+            "joint_observer_quorum_required": "passed",
+            "joint_to_final_membership_ordering": "passed",
+            "replicated_recovery_log_hash_bound": "passed",
+            "external_fencing_token_signature_required": "passed",
+            "fencing_epoch_monotonicity": "passed",
+            "stale_external_fence_rejected": "passed",
+            "replicated_authority_restart_continuity": "passed",
+            "dynamic_partition_epoch_chaos_safe": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -174,6 +183,7 @@ def main() -> None:
         "phase31_trace_seal_overhead": phase31_seal_overhead,
         "phase32_disaster_recovery": phase32_recovery,
         "phase33_durable_recovery": phase33_recovery,
+        "phase34_replicated_recovery": phase34_recovery,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -353,6 +363,17 @@ def main() -> None:
             "stale_membership_evidence_rejected": True,
             "concurrent_partition_race_single_commit": True,
             "durable_storage_and_external_fencing": "deployment_boundary",
+        },
+        "phase34_replicated_recovery": {
+            "joint_observer_quorum_required": True,
+            "joint_to_final_membership_ordering": True,
+            "replicated_recovery_log_hash_bound": True,
+            "external_fencing_token_signature_required": True,
+            "fencing_epoch_monotonicity": True,
+            "stale_external_fence_rejected": True,
+            "replicated_authority_restart_continuity": True,
+            "dynamic_partition_epoch_chaos_safe": True,
+            "transport_process_fencing_and_external_registry": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,

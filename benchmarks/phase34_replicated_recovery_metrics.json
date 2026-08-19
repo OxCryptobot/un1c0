@@ -1,0 +1,38 @@
+{
+  "active_fence_epoch": 1,
+  "active_owner_region_id": "region-b",
+  "benchmark": "phase34_replicated_recovery",
+  "chaos": {
+    "dynamic_partition_steps": 1,
+    "node_count": 4,
+    "safety_passed": true,
+    "stale_epoch_rejections": 1,
+    "stale_fence_rejections": 1,
+    "trace_digest": "148c485efb985d777c48b879fb7145081c6b033405c0dd46fe935d40da829f76"
+  },
+  "cluster_mutation_performed": false,
+  "external_fencing": {
+    "external_action": "activated",
+    "external_admission": true,
+    "fence_epoch": 1,
+    "owner_region_id": "region-b",
+    "token_hash_bound": true,
+    "token_signature_verified": true
+  },
+  "joint_membership": {
+    "final_index": 2,
+    "final_quorum_committed": true,
+    "joint_index": 1,
+    "joint_quorum_committed": true,
+    "membership_epoch": 2,
+    "membership_phase_stable": true
+  },
+  "private_key_persisted": false,
+  "restart": {
+    "commit_index_preserved": true,
+    "fence_epoch_preserved": true,
+    "log_len_preserved": true,
+    "trace_digest_preserved": true
+  },
+  "verification_mode": "deterministic_local_replicated_log_joint_quorum_and_signed_fencing"
+}

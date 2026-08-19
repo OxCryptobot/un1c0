@@ -83,6 +83,8 @@ printf '%s\n' '== Phase 32 disaster recovery and automated consensus failover ==
 scripts/validate_phase32_disaster_recovery.sh >"$TMP_DIR/phase32-disaster-recovery.log"
 printf '%s\n' '== Phase 33 durable recovery and observer-membership epochs =='
 scripts/validate_phase33_durable_recovery.sh >"$TMP_DIR/phase33-durable-recovery.log"
+printf '%s\n' '== Phase 34 replicated recovery authority and external fencing =='
+scripts/validate_phase34_replicated_recovery.sh >"$TMP_DIR/phase34-replicated-recovery.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

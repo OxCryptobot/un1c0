@@ -73,6 +73,16 @@ PHASE32_KEYS = [
     "idempotent_failover_evidence",
     "stale_or_conflicting_failover_rejected",
 ]
+PHASE34_KEYS = [
+    "joint_observer_quorum_required",
+    "joint_to_final_membership_ordering",
+    "replicated_recovery_log_hash_bound",
+    "external_fencing_token_signature_required",
+    "fencing_epoch_monotonicity",
+    "stale_external_fence_rejected",
+    "replicated_authority_restart_continuity",
+    "dynamic_partition_epoch_chaos_safe",
+]
 
 
 def main() -> int:
@@ -92,6 +102,7 @@ def main() -> int:
     phase30 = artifact["phase30_multi_region_failover"]
     phase31 = artifact["phase31_secure_replay_verification"]
     phase32 = artifact["phase32_disaster_recovery_failover"]
+    phase34 = artifact["phase34_replicated_recovery"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -127,6 +138,11 @@ def main() -> int:
             failures.append(f"phase32 evidence is not true: {key}")
     if phase32.get("production_cloud_authority") != "deployment_boundary":
         failures.append("phase32 cloud authority is not deployment-bound")
+    for key in PHASE34_KEYS:
+        if phase34.get(key) is not True:
+            failures.append(f"phase34 evidence is not true: {key}")
+    if phase34.get("transport_process_fencing_and_external_registry") != "deployment_boundary":
+        failures.append("phase34 transport, process fencing, and external registry are not deployment-bound")
     if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
         failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
@@ -152,6 +168,7 @@ def main() -> int:
         "phase30_evidence_checked": PHASE30_KEYS,
         "phase31_evidence_checked": PHASE31_KEYS,
         "phase32_evidence_checked": PHASE32_KEYS,
+        "phase34_evidence_checked": PHASE34_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",
