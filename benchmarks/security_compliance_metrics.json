@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "70f2ef298049723f90351058c0a9698c7648b455",
+  "commit": "3cc99015ce3f22e61c68bb1442787cf855c570f0",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -185,7 +185,7 @@
     "trusted_key_cluster_epoch_binding": "passed",
     "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-19T21:17:27.053578+00:00",
+  "generated_at_utc": "2026-08-19T21:21:45.931645+00:00",
   "operations": [
     {
       "baseline_errors": 0,
