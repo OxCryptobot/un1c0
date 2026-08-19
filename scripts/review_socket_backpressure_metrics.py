@@ -93,6 +93,16 @@ PHASE35_KEYS = [
     "fencing_authority_registry_pinned",
     "fencing_generation_rollback_rejected",
 ]
+PHASE36_KEYS = [
+    "authenticated_transport_envelope_signature_required",
+    "transport_receiver_binding_required",
+    "connection_epoch_replay_window_enforced",
+    "durable_witness_reservation_hash_bound",
+    "reservation_crash_cutover_atomic",
+    "protected_write_exact_fence_required",
+    "cross_host_chaos_duplicate_idempotent",
+    "stale_transport_replay_rejected",
+]
 
 
 def main() -> int:
@@ -114,6 +124,7 @@ def main() -> int:
     phase32 = artifact["phase32_disaster_recovery_failover"]
     phase34 = artifact["phase34_replicated_recovery"]
     phase35 = artifact["phase35_multileader_witness"]
+    phase36 = artifact["phase36_recovery_transport"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -159,6 +170,11 @@ def main() -> int:
             failures.append(f"phase35 evidence is not true: {key}")
     if phase35.get("transport_failure_detector_and_process_fencing") != "deployment_boundary":
         failures.append("phase35 transport, failure detector, and process fencing are not deployment-bound")
+    for key in PHASE36_KEYS:
+        if phase36.get(key) is not True:
+            failures.append(f"phase36 evidence is not true: {key}")
+    if phase36.get("kernel_tls_and_distributed_filesystem") != "deployment_boundary":
+        failures.append("phase36 kernel TLS and distributed filesystem are not deployment-bound")
     if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
         failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
@@ -186,6 +202,7 @@ def main() -> int:
         "phase32_evidence_checked": PHASE32_KEYS,
         "phase34_evidence_checked": PHASE34_KEYS,
         "phase35_evidence_checked": PHASE35_KEYS,
+        "phase36_evidence_checked": PHASE36_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",

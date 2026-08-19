@@ -64,6 +64,7 @@ def main() -> None:
     phase33_recovery = load_json(root / "benchmarks/phase33_durable_recovery_metrics.json")
     phase34_recovery = load_json(root / "benchmarks/phase34_replicated_recovery_metrics.json")
     phase35_recovery = load_json(root / "benchmarks/phase35_multileader_witness_metrics.json")
+    phase36_recovery = load_json(root / "benchmarks/phase36_recovery_transport_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -181,6 +182,14 @@ def main() -> None:
             "fencing_token_domain_bound": "passed",
             "fencing_authority_registry_pinned": "passed",
             "fencing_generation_rollback_rejected": "passed",
+            "authenticated_transport_envelope_signature_required": "passed",
+            "transport_receiver_binding_required": "passed",
+            "connection_epoch_replay_window_enforced": "passed",
+            "durable_witness_reservation_hash_bound": "passed",
+            "reservation_crash_cutover_atomic": "passed",
+            "protected_write_exact_fence_required": "passed",
+            "cross_host_chaos_duplicate_idempotent": "passed",
+            "stale_transport_replay_rejected": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -194,6 +203,7 @@ def main() -> None:
         "phase33_durable_recovery": phase33_recovery,
         "phase34_replicated_recovery": phase34_recovery,
         "phase35_multileader_witness": phase35_recovery,
+        "phase36_recovery_transport": phase36_recovery,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -395,6 +405,17 @@ def main() -> None:
             "fencing_authority_registry_pinned": True,
             "fencing_generation_rollback_rejected": True,
             "transport_failure_detector_and_process_fencing": "deployment_boundary",
+        },
+        "phase36_recovery_transport": {
+            "authenticated_transport_envelope_signature_required": True,
+            "transport_receiver_binding_required": True,
+            "connection_epoch_replay_window_enforced": True,
+            "durable_witness_reservation_hash_bound": True,
+            "reservation_crash_cutover_atomic": True,
+            "protected_write_exact_fence_required": True,
+            "cross_host_chaos_duplicate_idempotent": True,
+            "stale_transport_replay_rejected": True,
+            "kernel_tls_and_distributed_filesystem": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,
