@@ -2,12 +2,12 @@
   "artifact": "/home/ubuntu/un1c0/benchmarks/security_compliance_metrics.json",
   "benchmark_concurrency": 8,
   "cluster_mutation_performed": false,
-  "commit": "48fb53e61f7f50fba97e79ba2461b81e8b035af1",
+  "commit": "2e3d37129803cf3aefc5acf9dd7d87503b4c7676",
   "commit_is_current_or_ancestor": true,
-  "expected_gate_count": 97,
+  "expected_gate_count": 105,
   "failures": [],
-  "observed_gate_count": 97,
-  "passed_gate_count": 97,
+  "observed_gate_count": 105,
+  "passed_gate_count": 105,
   "phase14_rows": 12,
   "phase_sections_audited": [
     "phase15_election_timers",
@@ -28,7 +28,8 @@
     "phase30_multi_region_failover",
     "phase31_secure_replay_verification",
     "phase32_disaster_recovery_failover",
-    "phase33_durable_recovery"
+    "phase33_durable_recovery",
+    "phase34_replicated_recovery"
   ],
   "result": "passed",
   "secret_material_recorded": false
