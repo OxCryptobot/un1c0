@@ -79,6 +79,8 @@ printf '%s\n' '== Phase 30 deterministic multi-region failover =='
 scripts/validate_phase30_multiregion_failover.sh >"$TMP_DIR/phase30-multiregion-failover.log"
 printf '%s\n' '== Phase 31 secure deterministic replay =='
 scripts/validate_phase31_secure_replay.sh >"$TMP_DIR/phase31-secure-replay.log"
+printf '%s\n' '== Phase 32 disaster recovery and automated consensus failover =='
+scripts/validate_phase32_disaster_recovery.sh >"$TMP_DIR/phase32-disaster-recovery.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

@@ -1,0 +1,12 @@
+{
+  "benchmark": "phase31_trace_seal_verification",
+  "iterations": 2000,
+  "mean_us": 6445.259275,
+  "p50_us": 6432.468,
+  "p95_us": 6521.683,
+  "p99_us": 6716.035,
+  "private_key_persisted": false,
+  "production_boundary": "not a network, TLS, cloud-region, or key-custody benchmark",
+  "verification_errors": 0,
+  "verification_mode": "in_process_ed25519_and_canonical_sha256_payload"
+}

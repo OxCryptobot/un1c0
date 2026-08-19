@@ -1,0 +1,19 @@
+{
+  "active_region": "region-b",
+  "benchmark": "phase32_disaster_recovery",
+  "cluster_mutation_performed": false,
+  "events": 8,
+  "first_observer_reached_quorum": false,
+  "observer_count": 2,
+  "owner_term": 2,
+  "ownership_epoch": 2,
+  "private_key_persisted": false,
+  "production_boundary": "not a cloud-region, managed-storage, DNS, process-fencing, or key-custody benchmark",
+  "promotion_committed": true,
+  "required_observers": 2,
+  "safety_passed": true,
+  "second_observer_reached_quorum": true,
+  "trace_digest": "c30c328c6b6e47ab324089441781bdfcd6a717e0a54064ea7a1218b823584735",
+  "verification_mode": "deterministic_local_ed25519_observer_quorum",
+  "wait_action": "AwaitingQuorum { observed: 1, required: 2 }"
+}

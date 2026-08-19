@@ -63,6 +63,16 @@ PHASE31_KEYS = [
     "tampered_schedule_rejected",
     "trace_seal_verification",
 ]
+PHASE32_KEYS = [
+    "signed_region_failure_observation_required",
+    "distinct_observer_quorum_required",
+    "snapshot_hash_binding_required",
+    "higher_term_epoch_promotion_required",
+    "old_region_fenced_on_commit",
+    "single_active_region_invariant",
+    "idempotent_failover_evidence",
+    "stale_or_conflicting_failover_rejected",
+]
 
 
 def main() -> int:
@@ -81,6 +91,7 @@ def main() -> int:
     phase29 = artifact["phase29_authenticated_remote_fencing"]
     phase30 = artifact["phase30_multi_region_failover"]
     phase31 = artifact["phase31_secure_replay_verification"]
+    phase32 = artifact["phase32_disaster_recovery_failover"]
     security = artifact["security_notes"]
     failures: list[str] = []
 
@@ -111,6 +122,11 @@ def main() -> int:
             failures.append(f"phase31 evidence is not true: {key}")
     if phase31.get("production_key_custody_and_transport") != "deployment_boundary":
         failures.append("phase31 key custody and transport are not deployment-bound")
+    for key in PHASE32_KEYS:
+        if phase32.get(key) is not True:
+            failures.append(f"phase32 evidence is not true: {key}")
+    if phase32.get("production_cloud_authority") != "deployment_boundary":
+        failures.append("phase32 cloud authority is not deployment-bound")
     if phase28.get("network_failure_detector_and_clock_authority") != "deployment_boundary":
         failures.append("phase28 failure detector and clock authority is not deployment-bound")
     if phase26.get("crash_points_retaining_queue") != 4:
@@ -135,6 +151,7 @@ def main() -> int:
         "phase29_evidence_checked": PHASE29_KEYS,
         "phase30_evidence_checked": PHASE30_KEYS,
         "phase31_evidence_checked": PHASE31_KEYS,
+        "phase32_evidence_checked": PHASE32_KEYS,
         "runtime_metric_contract": [
             "in_flight_bytes",
             "receive_window_bytes",

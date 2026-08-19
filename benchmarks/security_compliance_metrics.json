@@ -17,8 +17,8 @@
         "messages_verified": 10000,
         "name": "healthy",
         "quorum_available": true,
-        "verification_p95_us": 34.392,
-        "verification_throughput_ops_per_sec": 33524.64889417293
+        "verification_p95_us": 35.994,
+        "verification_throughput_ops_per_sec": 34354.62522726519
       },
       {
         "cluster_size": 5,
@@ -28,8 +28,8 @@
         "messages_verified": 3600,
         "name": "majority_partition",
         "quorum_available": true,
-        "verification_p95_us": 29.815,
-        "verification_throughput_ops_per_sec": 33059.92196260509
+        "verification_p95_us": 28.733,
+        "verification_throughput_ops_per_sec": 33856.35476584489
       },
       {
         "cluster_size": 5,
@@ -39,13 +39,13 @@
         "messages_verified": 1600,
         "name": "minority_partition",
         "quorum_available": false,
-        "verification_p95_us": 30.166,
-        "verification_throughput_ops_per_sec": 32435.32487444385
+        "verification_p95_us": 28.443,
+        "verification_throughput_ops_per_sec": 34606.717046981015
       }
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "61d214914b03d45221df8a8865c3a939a1441a48",
+  "commit": "bdd3edfd08e66c4e2a8371573f62782263ba109f",
   "gates": {
     "asymmetric_partition_replayable": "passed",
     "atomic_queue_cutover": "passed",
@@ -65,6 +65,7 @@
     "crash_retry_queue_retention": "passed",
     "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
+    "distinct_observer_quorum_required": "passed",
     "durable_compaction_manifests": "passed",
     "durable_consensus_state_recovery": "passed",
     "durable_external_audit_sink": "passed",
@@ -78,6 +79,8 @@
     "fence_survives_restart": "passed",
     "follower_triggered_snapshot_requests": "passed",
     "helm_fail_closed": "passed",
+    "higher_term_epoch_promotion_required": "passed",
+    "idempotent_failover_evidence": "passed",
     "incremental_state_sync": "passed",
     "leader_lease_read_optimization": "passed",
     "lease_expiry_fences_delivery": "passed",
@@ -86,6 +89,7 @@
     "multi_region_retry_reaches_quorum": "passed",
     "network_stress_packet_corruption": "passed",
     "observer_quorum_admission": "passed",
+    "old_region_fenced_on_commit": "passed",
     "ownership_transfer_clears_fence": "passed",
     "per_peer_socket_quotas": "passed",
     "phase11_membership_change": "passed",
@@ -108,14 +112,17 @@
     "replication_backpressure_boundaries": "passed",
     "replication_flow_control": "passed",
     "rust_all_targets": "passed",
+    "signed_region_failure_observation_required": "passed",
     "signed_replay_manifest_required": "passed",
     "signer_rotation_revocation": "passed",
+    "single_active_region_invariant": "passed",
     "skill_validation": "passed",
     "snapshot_ack_binding": "passed",
     "snapshot_bandwidth_backpressure": "passed",
     "snapshot_cancellation": "passed",
     "snapshot_chunk_streaming": "passed",
     "snapshot_completion_accounting": "passed",
+    "snapshot_hash_binding_required": "passed",
     "snapshot_install_readiness": "passed",
     "snapshot_installation": "passed",
     "snapshot_request_binding": "passed",
@@ -124,13 +131,14 @@
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed",
     "split_brain_commit_exclusion": "passed",
+    "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
     "tampered_schedule_rejected": "passed",
     "trace_seal_verification": "passed",
     "transfer_crash_recovers_safely": "passed",
     "trusted_key_cluster_epoch_binding": "passed"
   },
-  "generated_at_utc": "2026-08-19T05:19:07.948086+00:00",
+  "generated_at_utc": "2026-08-19T05:31:28.442272+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -216,132 +224,132 @@
       "errors": 0,
       "operations": 128,
       "p50_us": 2,
-      "p95_us": 3,
-      "p99_us": 7,
+      "p95_us": 2,
+      "p99_us": 4,
       "path": "lease_fast_path",
       "successful": 128,
-      "throughput_ops_per_sec": 196946.7105283403
+      "throughput_ops_per_sec": 306639.7079256782
     },
     {
       "concurrency": 1,
       "errors": 0,
       "operations": 128,
       "p50_us": 4,
-      "p95_us": 6,
+      "p95_us": 5,
       "p99_us": 8,
       "path": "quorum_read_index",
       "successful": 128,
-      "throughput_ops_per_sec": 177917.14620897482
+      "throughput_ops_per_sec": 174402.84058626604
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 21,
-      "p99_us": 126,
+      "p50_us": 10,
+      "p95_us": 24,
+      "p99_us": 228,
       "path": "lease_fast_path",
       "successful": 256,
-      "throughput_ops_per_sec": 95979.07656130963
+      "throughput_ops_per_sec": 91866.14958464658
     },
     {
       "concurrency": 2,
       "errors": 0,
       "operations": 256,
-      "p50_us": 11,
-      "p95_us": 19,
-      "p99_us": 325,
+      "p50_us": 4,
+      "p95_us": 15,
+      "p99_us": 121,
       "path": "quorum_read_index",
       "successful": 256,
-      "throughput_ops_per_sec": 88088.81003716936
+      "throughput_ops_per_sec": 122091.03794551305
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 126,
-      "p99_us": 701,
+      "p95_us": 116,
+      "p99_us": 521,
       "path": "lease_fast_path",
       "successful": 512,
-      "throughput_ops_per_sec": 87621.75059358601
+      "throughput_ops_per_sec": 86735.11738886639
     },
     {
       "concurrency": 4,
       "errors": 0,
       "operations": 512,
       "p50_us": 11,
-      "p95_us": 47,
-      "p99_us": 464,
+      "p95_us": 48,
+      "p99_us": 526,
       "path": "quorum_read_index",
       "successful": 512,
-      "throughput_ops_per_sec": 86415.57316647927
+      "throughput_ops_per_sec": 88999.31912044338
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 316,
-      "p99_us": 1203,
+      "p95_us": 402,
+      "p99_us": 859,
       "path": "lease_fast_path",
       "successful": 1024,
-      "throughput_ops_per_sec": 95444.46548862348
+      "throughput_ops_per_sec": 92160.27463761842
     },
     {
       "concurrency": 8,
       "errors": 0,
       "operations": 1024,
       "p50_us": 11,
-      "p95_us": 193,
-      "p99_us": 1355,
+      "p95_us": 280,
+      "p99_us": 1566,
       "path": "quorum_read_index",
       "successful": 1024,
-      "throughput_ops_per_sec": 86777.08712029728
+      "throughput_ops_per_sec": 80409.79469824616
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 482,
-      "p99_us": 2749,
+      "p95_us": 727,
+      "p99_us": 2454,
       "path": "lease_fast_path",
       "successful": 2048,
-      "throughput_ops_per_sec": 90724.87045126408
+      "throughput_ops_per_sec": 86833.18852655443
     },
     {
       "concurrency": 16,
       "errors": 0,
       "operations": 2048,
       "p50_us": 11,
-      "p95_us": 503,
-      "p99_us": 3113,
+      "p95_us": 553,
+      "p99_us": 2798,
       "path": "quorum_read_index",
       "successful": 2048,
-      "throughput_ops_per_sec": 86826.12771156768
+      "throughput_ops_per_sec": 87854.76509145818
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1355,
-      "p99_us": 4580,
+      "p95_us": 1378,
+      "p99_us": 4892,
       "path": "lease_fast_path",
       "successful": 4096,
-      "throughput_ops_per_sec": 89050.50550728242
+      "throughput_ops_per_sec": 89414.76529857492
     },
     {
       "concurrency": 32,
       "errors": 0,
       "operations": 4096,
       "p50_us": 11,
-      "p95_us": 1370,
-      "p99_us": 4537,
+      "p95_us": 1674,
+      "p99_us": 4600,
       "path": "quorum_read_index",
       "successful": 4096,
-      "throughput_ops_per_sec": 91856.90344996231
+      "throughput_ops_per_sec": 86942.65270269175
     }
   ],
   "phase15_election_timers": {
@@ -524,6 +532,48 @@
     "tampered_schedule_rejected": true,
     "trace_seal_verification": true,
     "trusted_key_cluster_epoch_binding": true
+  },
+  "phase31_trace_seal_overhead": {
+    "benchmark": "phase31_trace_seal_verification",
+    "iterations": 2000,
+    "mean_us": 6445.259275,
+    "p50_us": 6432.468,
+    "p95_us": 6521.683,
+    "p99_us": 6716.035,
+    "private_key_persisted": false,
+    "production_boundary": "not a network, TLS, cloud-region, or key-custody benchmark",
+    "verification_errors": 0,
+    "verification_mode": "in_process_ed25519_and_canonical_sha256_payload"
+  },
+  "phase32_disaster_recovery": {
+    "active_region": "region-b",
+    "benchmark": "phase32_disaster_recovery",
+    "cluster_mutation_performed": false,
+    "events": 8,
+    "first_observer_reached_quorum": false,
+    "observer_count": 2,
+    "owner_term": 2,
+    "ownership_epoch": 2,
+    "private_key_persisted": false,
+    "production_boundary": "not a cloud-region, managed-storage, DNS, process-fencing, or key-custody benchmark",
+    "promotion_committed": true,
+    "required_observers": 2,
+    "safety_passed": true,
+    "second_observer_reached_quorum": true,
+    "trace_digest": "c30c328c6b6e47ab324089441781bdfcd6a717e0a54064ea7a1218b823584735",
+    "verification_mode": "deterministic_local_ed25519_observer_quorum",
+    "wait_action": "AwaitingQuorum { observed: 1, required: 2 }"
+  },
+  "phase32_disaster_recovery_failover": {
+    "distinct_observer_quorum_required": true,
+    "higher_term_epoch_promotion_required": true,
+    "idempotent_failover_evidence": true,
+    "old_region_fenced_on_commit": true,
+    "production_cloud_authority": "deployment_boundary",
+    "signed_region_failure_observation_required": true,
+    "single_active_region_invariant": true,
+    "snapshot_hash_binding_required": true,
+    "stale_or_conflicting_failover_rejected": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,

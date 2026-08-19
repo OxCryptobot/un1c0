@@ -291,6 +291,14 @@ impl ReplayTraceSeal {
         Ok(seal)
     }
 
+    pub fn verify(
+        &self,
+        manifest: &ReplayManifest,
+        trusted_key: &VerifyingKey,
+    ) -> Result<(), ReplaySecurityError> {
+        self.verify_binding(manifest, trusted_key)
+    }
+
     fn verify_binding(
         &self,
         manifest: &ReplayManifest,

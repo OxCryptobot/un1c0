@@ -59,6 +59,8 @@ def main() -> None:
     phase14_reads = load_json(root / "benchmarks/phase14_read_benchmark.json")
     phase30_failover = load_json(root / "benchmarks/phase30_multiregion_failover_metrics.json")
     phase31_replay = load_json(root / "benchmarks/phase31_secure_replay_metrics.json")
+    phase31_seal_overhead = load_json(root / "benchmarks/phase31_trace_seal_overhead.json")
+    phase32_recovery = load_json(root / "benchmarks/phase32_disaster_recovery_metrics.json")
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "commit": git_head(root),
@@ -145,6 +147,14 @@ def main() -> None:
             "trusted_key_cluster_epoch_binding": "passed",
             "tampered_schedule_rejected": "passed",
             "trace_seal_verification": "passed",
+            "signed_region_failure_observation_required": "passed",
+            "distinct_observer_quorum_required": "passed",
+            "snapshot_hash_binding_required": "passed",
+            "higher_term_epoch_promotion_required": "passed",
+            "old_region_fenced_on_commit": "passed",
+            "single_active_region_invariant": "passed",
+            "idempotent_failover_evidence": "passed",
+            "stale_or_conflicting_failover_rejected": "passed",
         },
         "benchmark_concurrency": 8,
         "operations": operations,
@@ -153,6 +163,8 @@ def main() -> None:
         "phase14_read_optimization": phase14_reads,
         "phase30_multi_region_failover": phase30_failover,
         "phase31_secure_replay": phase31_replay,
+        "phase31_trace_seal_overhead": phase31_seal_overhead,
+        "phase32_disaster_recovery": phase32_recovery,
         "phase15_election_timers": {
             "timer_actions": ["Idle", "StartElection", "SendHeartbeats"],
             "clock_regression": "blocked_until_explicit_reanchor",
@@ -307,6 +319,17 @@ def main() -> None:
             "tampered_schedule_rejected": True,
             "trace_seal_verification": True,
             "production_key_custody_and_transport": "deployment_boundary",
+        },
+        "phase32_disaster_recovery_failover": {
+            "signed_region_failure_observation_required": True,
+            "distinct_observer_quorum_required": True,
+            "snapshot_hash_binding_required": True,
+            "higher_term_epoch_promotion_required": True,
+            "old_region_fenced_on_commit": True,
+            "single_active_region_invariant": True,
+            "idempotent_failover_evidence": True,
+            "stale_or_conflicting_failover_rejected": True,
+            "production_cloud_authority": "deployment_boundary",
         },
         "security_notes": {
             "secret_material_recorded": False,
