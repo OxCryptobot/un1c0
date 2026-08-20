@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 153
+EXPECTED_GATE_COUNT = 161
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -20,6 +20,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase39_resource_durability.cluster_mutation_performed",
     "phase40_high_throughput_persistence.secret_material_recorded",
     "phase40_high_throughput_persistence.cluster_mutation_performed",
+    "phase41_replicated_durability.secret_material_recorded",
+    "phase41_replicated_durability.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -80,6 +82,18 @@ REQUIRED_PHASES = {
         "contention_timing_recorded",
         "active_worker_resource_snapshot",
         "concurrent_failure_propagation",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase41_replicated_durability": [
+        "cas_writer_signature_required",
+        "replica_ack_signature_required",
+        "cas_expected_generation_hash_exact",
+        "replicated_ack_quorum_required",
+        "replica_ack_conflict_rejected",
+        "nonce_retry_idempotent",
+        "cas_commit_atomic_on_failure",
+        "durable_cas_snapshot_hash_bound",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -366,6 +380,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("fencing_supervision_mode") == "signed authority heartbeat plus exact consumer acknowledgements", failures, "unexpected fencing supervision security note")
     check(notes.get("resource_durability_mode") == "bounded local fsync, atomic rename, and process-resource instrumentation", failures, "unexpected resource durability security note")
     check(notes.get("high_throughput_persistence_mode") == "bounded concurrent unique staging with atomic rename and active-worker resource capture", failures, "unexpected high-throughput persistence security note")
+    check(notes.get("replicated_durability_mode") == "signed replica acknowledgements with quorum-gated single-writer compare-and-swap", failures, "unexpected replicated durability security note")
 
     return {
         "artifact": str(artifact),

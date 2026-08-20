@@ -97,6 +97,8 @@ printf '%s\n' '== Phase 39 resource utilization and persistence durability =='
 scripts/validate_phase39_resource_durability.sh >"$TMP_DIR/phase39-resource-durability.log"
 printf '%s\n' '== Phase 40 high-throughput persistence verification =='
 scripts/validate_phase40_high_throughput_persistence.sh >"$TMP_DIR/phase40-high-throughput-persistence.log"
+printf '%s\n' '== Phase 41 replicated durability and single-writer CAS =='
+scripts/validate_phase41_replicated_durability.sh >"$TMP_DIR/phase41-replicated-durability.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \
