@@ -1,6 +1,7 @@
 pub mod agentic;
 pub mod consensus;
 pub mod cross_process_ownership;
+pub mod ownership_bound_cas;
 pub mod disaster_recovery;
 pub mod evolution;
 pub mod external_fencing_supervision;
@@ -29,6 +30,7 @@ pub mod walker;
 pub use agentic::*;
 pub use consensus::*;
 pub use cross_process_ownership::*;
+pub use ownership_bound_cas::*;
 pub use disaster_recovery::*;
 pub use evolution::*;
 pub use external_fencing_supervision::*;

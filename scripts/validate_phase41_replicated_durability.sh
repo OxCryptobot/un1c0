@@ -28,5 +28,5 @@ grep -q '"cluster_mutation_performed": false' "$TMP_DIR/benchmark.json"
 grep -q 'cas_writer_signature_required' scripts/collect_security_compliance_metrics.py
 grep -q 'replicated_ack_quorum_required' scripts/collect_security_compliance_metrics.py
 grep -q 'phase41_replicated_durability' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 169' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 177' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 41 replicated-durability validation passed.'

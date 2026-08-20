@@ -262,6 +262,11 @@ pub struct OwnershipRecord {
 }
 
 impl OwnershipRecord {
+    pub(crate) fn recompute_hash(&mut self) -> Result<(), OwnershipError> {
+        self.record_hash = self.content_hash()?;
+        Ok(())
+    }
+
     fn content_hash(&self) -> Result<String, OwnershipError> {
         digest_json(&(
             &self.cluster_id,
@@ -531,13 +536,48 @@ impl CrossProcessOwnershipStore {
         })
     }
 
-    fn with_lock<T, F>(&self, operation: F) -> Result<T, OwnershipError>
+    pub(crate) fn with_owned_lock<T, E, F>(
+        &self,
+        permit: &OwnershipWritePermit,
+        current_tick: u64,
+        operation: F,
+    ) -> Result<T, E>
     where
-        F: FnOnce() -> Result<T, OwnershipError>,
+        E: From<OwnershipError>,
+        F: FnOnce(&OwnershipRecord) -> Result<T, E>,
+    {
+        self.with_lock(|| {
+            let record = self.load_required_unlocked().map_err(E::from)?;
+            if record.fenced || current_tick >= record.lease_expiry_tick {
+                return Err(E::from(OwnershipError::LeaseExpired));
+            }
+            if record.owner_id != permit.owner_id
+                || record.process_instance != permit.process_instance
+                || record.ownership_epoch != permit.ownership_epoch
+                || record.record_hash != permit.record_hash
+            {
+                return Err(E::from(OwnershipError::RecordMismatch));
+            }
+            operation(&record)
+        })
+    }
+
+    pub(crate) fn persist_owned_record(
+        &self,
+        record: &OwnershipRecord,
+    ) -> Result<(), OwnershipError> {
+        record.validate()?;
+        self.persist_unlocked(record)
+    }
+
+    fn with_lock<T, E, F>(&self, operation: F) -> Result<T, E>
+    where
+        E: From<OwnershipError>,
+        F: FnOnce() -> Result<T, E>,
     {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|error| OwnershipError::PersistenceFailed(error.to_string()))?;
+                .map_err(|error| E::from(OwnershipError::PersistenceFailed(error.to_string())))?;
         }
         let lock_path = self.path.with_extension("lock");
         let mut lock = None;
@@ -549,7 +589,9 @@ impl CrossProcessOwnershipStore {
             {
                 Ok(mut file) => {
                     file.write_all(std::process::id().to_string().as_bytes())
-                        .map_err(|error| OwnershipError::PersistenceFailed(error.to_string()))?;
+                        .map_err(|error| {
+                            E::from(OwnershipError::PersistenceFailed(error.to_string()))
+                        })?;
                     lock = Some(file);
                     break;
                 }
@@ -557,19 +599,23 @@ impl CrossProcessOwnershipStore {
                     thread::sleep(Duration::from_millis(1));
                 }
                 Err(error) => {
-                    return Err(OwnershipError::PersistenceFailed(error.to_string()));
+                    return Err(E::from(OwnershipError::PersistenceFailed(
+                        error.to_string(),
+                    )));
                 }
             }
         }
         if lock.is_none() {
-            return Err(OwnershipError::Busy);
+            return Err(E::from(OwnershipError::Busy));
         }
         let result = operation();
         drop(lock);
         let cleanup = fs::remove_file(&lock_path);
         match (result, cleanup) {
             (Ok(value), Ok(())) => Ok(value),
-            (Ok(_), Err(error)) => Err(OwnershipError::PersistenceFailed(error.to_string())),
+            (Ok(_), Err(error)) => Err(E::from(OwnershipError::PersistenceFailed(
+                error.to_string(),
+            ))),
             (Err(error), Ok(())) | (Err(error), Err(_)) => Err(error),
         }
     }

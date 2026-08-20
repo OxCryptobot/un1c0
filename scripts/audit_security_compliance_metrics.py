@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 169
+EXPECTED_GATE_COUNT = 177
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -24,6 +24,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase41_replicated_durability.cluster_mutation_performed",
     "phase42_cross_process_ownership.secret_material_recorded",
     "phase42_cross_process_ownership.cluster_mutation_performed",
+    "phase43_ownership_bound_cas.secret_material_recorded",
+    "phase43_ownership_bound_cas.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -108,6 +110,18 @@ REQUIRED_PHASES = {
         "managed_recovery_state_fail_closed",
         "managed_recovery_distinct_quorum",
         "recovery_evidence_hash_bound",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase43_ownership_bound_cas": [
+        "ownership_bound_cas_permit_required",
+        "cas_request_epoch_exactly_bound",
+        "ownership_record_hash_exactly_bound",
+        "ownership_lock_held_through_quorum",
+        "cas_quorum_failure_preserves_ownership",
+        "successful_cas_advances_ownership_record",
+        "stale_permit_rejected_before_cas",
+        "idempotent_retry_preserves_ownership",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -396,6 +410,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("high_throughput_persistence_mode") == "bounded concurrent unique staging with atomic rename and active-worker resource capture", failures, "unexpected high-throughput persistence security note")
     check(notes.get("replicated_durability_mode") == "signed replica acknowledgements with quorum-gated single-writer compare-and-swap", failures, "unexpected replicated durability security note")
     check(notes.get("cross_process_ownership_mode") == "atomic ownership lease epochs with hash-bound managed-volume recovery quorum", failures, "unexpected cross-process ownership security note")
+    check(notes.get("ownership_bound_cas_mode") == "ownership permit held through replicated CAS quorum and record advancement", failures, "unexpected ownership-bound CAS security note")
 
     return {
         "artifact": str(artifact),
