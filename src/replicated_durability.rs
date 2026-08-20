@@ -473,19 +473,86 @@ pub enum CasCommitOutcome {
 }
 
 #[derive(Debug, Clone)]
+struct PinnedVerificationKey {
+    bytes: Vec<u8>,
+    key: VerifyingKey,
+}
+
+#[derive(Debug, Default)]
+struct VerificationFactCache {
+    capacity: usize,
+    entries: BTreeMap<String, u64>,
+    next_age: u64,
+    hits: u64,
+    misses: u64,
+}
+
+impl VerificationFactCache {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity,
+            ..Self::default()
+        }
+    }
+
+    fn check(&mut self, key: &str) -> bool {
+        if self.entries.contains_key(key) {
+            self.next_age = self.next_age.saturating_add(1);
+            self.entries.insert(key.to_string(), self.next_age);
+            self.hits = self.hits.saturating_add(1);
+            true
+        } else {
+            self.misses = self.misses.saturating_add(1);
+            false
+        }
+    }
+
+    fn insert(&mut self, key: String) {
+        self.next_age = self.next_age.saturating_add(1);
+        self.entries.insert(key, self.next_age);
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, age)| **age)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn stats(&self) -> (u64, u64, usize) {
+        (self.hits, self.misses, self.entries.len())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CasPreAdmissionContext {
     cluster_id: String,
     resource_id: String,
     snapshot_id: String,
     required_quorum: usize,
-    writers: BTreeMap<String, Vec<u8>>,
-    replicas: BTreeMap<String, Vec<u8>>,
+    context_fingerprint: String,
+    writers: BTreeMap<String, PinnedVerificationKey>,
+    replicas: BTreeMap<String, PinnedVerificationKey>,
+    verification_cache: std::sync::Arc<std::sync::Mutex<VerificationFactCache>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CasPreAdmissionEvidence {
     pub request_hash: String,
     pub verified_replica_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CasPreAdmissionCacheMetrics {
+    pub context_fingerprint: String,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_entries: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -501,18 +568,132 @@ pub struct SingleWriterCasStore {
 }
 
 impl CasPreAdmissionContext {
+    fn cache_key(&self, namespace: &str, content_hash: &str) -> String {
+        format!("{}:{namespace}:{content_hash}", self.context_fingerprint)
+    }
+
+    fn cached_fact(&self, namespace: &str, content_hash: &str) -> bool {
+        self.verification_cache
+            .lock()
+            .expect("verification cache lock")
+            .check(&self.cache_key(namespace, content_hash))
+    }
+
+    fn record_fact(&self, namespace: &str, content_hash: &str) {
+        self.verification_cache
+            .lock()
+            .expect("verification cache lock")
+            .insert(self.cache_key(namespace, content_hash));
+    }
+
+    fn verify_request(&self, request: &CasWriteRequest) -> Result<(), ReplicatedDurabilityError> {
+        request.validate_shape()?;
+        if request.cluster_id != self.cluster_id
+            || request.resource_id != self.resource_id
+            || request.snapshot_id != self.snapshot_id
+        {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "CAS request is bound to a different resource".into(),
+            ));
+        }
+        let expected = self
+            .writers
+            .get(&request.writer_id)
+            .ok_or_else(|| ReplicatedDurabilityError::UnknownWriter(request.writer_id.clone()))?;
+        if expected.bytes.as_slice() != request.public_key.as_slice() {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "CAS writer key does not match its pinned key".into(),
+            ));
+        }
+        let content_hash = request.content_hash()?;
+        let cached = self.cached_fact("request", &content_hash);
+        if !cached {
+            let signature = Signature::from_slice(&request.signature).map_err(|_| {
+                ReplicatedDurabilityError::Rejected("writer signature is invalid".into())
+            })?;
+            expected
+                .key
+                .verify(&request.canonical_payload()?, &signature)
+                .map_err(|_| {
+                    ReplicatedDurabilityError::Rejected("CAS writer signature is invalid".into())
+                })?;
+            self.record_fact("request", &content_hash);
+        }
+        if request.request_hash != content_hash {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "CAS request hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_ack(
+        &self,
+        acknowledgement: &ReplicaDurabilityAcknowledgement,
+    ) -> Result<(), ReplicatedDurabilityError> {
+        acknowledgement.validate_shape()?;
+        if acknowledgement.cluster_id != self.cluster_id
+            || acknowledgement.resource_id != self.resource_id
+            || acknowledgement.snapshot_id != self.snapshot_id
+        {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "replica acknowledgement is bound to a different resource".into(),
+            ));
+        }
+        let expected = self
+            .replicas
+            .get(&acknowledgement.replica_id)
+            .ok_or_else(|| {
+                ReplicatedDurabilityError::UnknownReplica(acknowledgement.replica_id.clone())
+            })?;
+        if expected.bytes.as_slice() != acknowledgement.public_key.as_slice() {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "replica key does not match its pinned key".into(),
+            ));
+        }
+        let event_hash = acknowledgement.content_hash()?;
+        let cached = self.cached_fact("ack", &event_hash);
+        if !cached {
+            let signature = Signature::from_slice(&acknowledgement.signature).map_err(|_| {
+                ReplicatedDurabilityError::Rejected("replica signature is invalid".into())
+            })?;
+            expected
+                .key
+                .verify(&acknowledgement.canonical_payload()?, &signature)
+                .map_err(|_| {
+                    ReplicatedDurabilityError::Rejected("replica signature is invalid".into())
+                })?;
+            self.record_fact("ack", &event_hash);
+        }
+        if acknowledgement.event_hash != event_hash {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "replica acknowledgement hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn cache_metrics(&self) -> CasPreAdmissionCacheMetrics {
+        let (cache_hits, cache_misses, cache_entries) = self
+            .verification_cache
+            .lock()
+            .expect("verification cache lock")
+            .stats();
+        CasPreAdmissionCacheMetrics {
+            context_fingerprint: self.context_fingerprint.clone(),
+            cache_hits,
+            cache_misses,
+            cache_entries,
+        }
+    }
+
     pub fn verify(
         &self,
         request: &CasWriteRequest,
         acknowledgements: &[ReplicaDurabilityAcknowledgement],
         current_tick: u64,
     ) -> Result<CasPreAdmissionEvidence, ReplicatedDurabilityError> {
-        request.verify(
-            &self.writers,
-            &self.cluster_id,
-            &self.resource_id,
-            &self.snapshot_id,
-        )?;
+        self.verify_request(request)?;
         if request.proposed_hash != request.payload_hash {
             return Err(ReplicatedDurabilityError::Rejected(
                 "CAS proposed hash does not match payload hash".into(),
@@ -520,12 +701,7 @@ impl CasPreAdmissionContext {
         }
         let mut accepted: BTreeMap<String, String> = BTreeMap::new();
         for acknowledgement in acknowledgements {
-            acknowledgement.verify(
-                &self.replicas,
-                &self.cluster_id,
-                &self.resource_id,
-                &self.snapshot_id,
-            )?;
+            self.verify_ack(acknowledgement)?;
             if acknowledgement.request_hash != request.request_hash
                 || acknowledgement.proposed_generation != request.proposed_generation
                 || acknowledgement.proposed_hash != request.proposed_hash
@@ -630,15 +806,31 @@ impl SingleWriterCasStore {
         &self.state
     }
 
-    pub fn pre_admission_context(&self) -> CasPreAdmissionContext {
-        CasPreAdmissionContext {
+    pub fn pre_admission_context(
+        &self,
+    ) -> Result<CasPreAdmissionContext, ReplicatedDurabilityError> {
+        let writers = parse_pinned_keys(&self.writers, "writer")?;
+        let replicas = parse_pinned_keys(&self.replicas, "replica")?;
+        let context_fingerprint = digest_json(&(
+            &self.cluster_id,
+            &self.resource_id,
+            &self.state.snapshot_id,
+            self.required_quorum,
+            &self.writers,
+            &self.replicas,
+        ))?;
+        Ok(CasPreAdmissionContext {
             cluster_id: self.cluster_id.clone(),
             resource_id: self.resource_id.clone(),
             snapshot_id: self.state.snapshot_id.clone(),
             required_quorum: self.required_quorum,
-            writers: self.writers.clone(),
-            replicas: self.replicas.clone(),
-        }
+            context_fingerprint,
+            writers,
+            replicas,
+            verification_cache: std::sync::Arc::new(std::sync::Mutex::new(
+                VerificationFactCache::with_capacity(2_048),
+            )),
+        })
     }
 
     pub fn committed_request_count(&self) -> usize {
@@ -1004,6 +1196,30 @@ fn snapshot_hash(
     committed_requests: &BTreeMap<String, CasCommitReceipt>,
 ) -> Result<String, ReplicatedDurabilityError> {
     digest_json(&(cluster_id, resource_id, state, committed_requests))
+}
+
+fn parse_pinned_keys(
+    registry: &BTreeMap<String, Vec<u8>>,
+    kind: &str,
+) -> Result<BTreeMap<String, PinnedVerificationKey>, ReplicatedDurabilityError> {
+    registry
+        .iter()
+        .map(|(id, bytes)| {
+            let key_bytes: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                ReplicatedDurabilityError::Rejected(format!("{kind} key shape is invalid"))
+            })?;
+            let key = VerifyingKey::from_bytes(&key_bytes).map_err(|_| {
+                ReplicatedDurabilityError::Rejected(format!("{kind} key is invalid"))
+            })?;
+            Ok((
+                id.clone(),
+                PinnedVerificationKey {
+                    bytes: bytes.clone(),
+                    key,
+                },
+            ))
+        })
+        .collect()
 }
 
 fn register_pinned_key(

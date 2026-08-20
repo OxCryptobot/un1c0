@@ -1,0 +1,113 @@
+{
+  "project_info": {
+    "title": "Phase 45: Bounded Parallel Pre-Admission Verification",
+    "created": 1787238505.072,
+    "last_updated": 1787238723.305,
+    "total_slides": 10
+  },
+  "slides": [
+    {
+      "id": "slide_1",
+      "state": "edited",
+      "pageNum": 1
+    },
+    {
+      "id": "slide_2",
+      "state": "edited",
+      "pageNum": 2
+    },
+    {
+      "id": "slide_3",
+      "state": "edited",
+      "pageNum": 3
+    },
+    {
+      "id": "slide_4",
+      "state": "edited",
+      "pageNum": 4
+    },
+    {
+      "id": "slide_5",
+      "state": "edited",
+      "pageNum": 5
+    },
+    {
+      "id": "slide_6",
+      "state": "edited",
+      "pageNum": 6
+    },
+    {
+      "id": "slide_7",
+      "state": "edited",
+      "pageNum": 7
+    },
+    {
+      "id": "slide_8",
+      "state": "edited",
+      "pageNum": 8
+    },
+    {
+      "id": "slide_9",
+      "state": "edited",
+      "pageNum": 9
+    },
+    {
+      "id": "slide_10",
+      "state": "edited",
+      "pageNum": 10
+    }
+  ],
+  "outline": [
+    {
+      "id": "slide_1",
+      "title": "Phase 45: Bounded Parallel Pre-Admission Verification",
+      "summary": "Title slide with subtitle, footer, and the 193-gate badge."
+    },
+    {
+      "id": "slide_2",
+      "title": "Why Phase 45 exists",
+      "summary": "Analysis of the observed bottleneck under contention using the Phase 45 latency breakdown chart.",
+      "image_plan": "/home/ubuntu/un1c0/benchmarks/phase45_latency_breakdown.png - Phase 45 verifier latency breakdown chart showing 16-producer bottleneck and p95 metrics"
+    },
+    {
+      "id": "slide_3",
+      "title": "System boundary",
+      "summary": "Flowchart showing the path from bounded admission through parallel verification to serialized mutation and persistence."
+    },
+    {
+      "id": "slide_4",
+      "title": "What runs in parallel",
+      "summary": "Comparison of read-only cryptographic checks versus lock-held mutation state."
+    },
+    {
+      "id": "slide_5",
+      "title": "Ordered dispatch prevents reordering",
+      "summary": "Sequence diagram explaining how out-of-order parallel verification results are serialized for mutation."
+    },
+    {
+      "id": "slide_6",
+      "title": "Security invariants",
+      "summary": "Table of ownership, CAS, quorum, freshness, and failure behaviors that Phase 45 refuses to weaken."
+    },
+    {
+      "id": "slide_7",
+      "title": "Typed failure paths",
+      "summary": "Horizontal state strip of the five typed failure outcomes and the rule against converting errors to success."
+    },
+    {
+      "id": "slide_8",
+      "title": "Sanitized stress evidence",
+      "summary": "Table showing conflict-intent throughput and exactly-one-commit safety under 1–16 producers."
+    },
+    {
+      "id": "slide_9",
+      "title": "Phase 45 validation evidence",
+      "summary": "List of the 193/193 gates passed, security notes, and external references."
+    },
+    {
+      "id": "slide_10",
+      "title": "Phase 46: the next optimization boundary",
+      "summary": "Overview of adaptive admission, verification-cost reduction, and hot-key replay results."
+    }
+  ]
+}

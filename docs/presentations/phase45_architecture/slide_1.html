@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Phase 45: Bounded Parallel Pre-Admission Verification</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 1fr auto;
+            border: 1px solid #0A192F;
+        }
+        .main-content {
+            grid-column: 1 / 9;
+            grid-row: 1;
+            padding: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            border-right: 1px solid #0A192F;
+        }
+        .side-content {
+            grid-column: 9 / 13;
+            grid-row: 1;
+            padding: 80px 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-end;
+        }
+        .footer {
+            grid-column: 1 / 13;
+            grid-row: 2;
+            padding: 30px 80px;
+            border-top: 1px solid #0A192F;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            color: #0A192F;
+            display: flex;
+            justify-content: space-between;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 64px;
+            color: #0A192F;
+            line-height: 1.2;
+            margin-bottom: 40px;
+        }
+        h2 {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-weight: 400;
+            font-size: 28px;
+            color: #333D47;
+            line-height: 1.5;
+        }
+        .badge {
+            border: 1px solid #005A9C;
+            padding: 20px;
+            text-align: center;
+            width: 100%;
+            background-color: #F4F5F6;
+        }
+        .badge-number {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 48px;
+            color: #005A9C;
+        }
+        .badge-text {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            color: #0A192F;
+            margin-top: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .connector-line {
+            width: 100px;
+            height: 1px;
+            background-color: #005A9C;
+            margin-bottom: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="main-content">
+            <div class="connector-line"></div>
+            <h1>Phase 45:<br>Bounded Parallel Pre-Admission Verification</h1>
+            <h2>Moving read-only cryptographic checks off the mutation worker without weakening ownership-epoch fencing.</h2>
+        </div>
+        <div class="side-content">
+            <div class="badge">
+                <div class="badge-number">193</div>
+                <div class="badge-text">Gates Passed</div>
+            </div>
+        </div>
+        <div class="footer">
+            <span>un1c0 local-first agentic language system</span>
+            <span>Verified through Phase 45 | Phase 46 optimization in progress</span>
+        </div>
+    </div>
+</body>
+</html>

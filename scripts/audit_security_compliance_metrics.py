@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 193
+EXPECTED_GATE_COUNT = 201
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -30,6 +30,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase44_ownership_bound_cas_executor.cluster_mutation_performed",
     "phase45_ownership_bound_cas_verifier.secret_material_recorded",
     "phase45_ownership_bound_cas_verifier.cluster_mutation_performed",
+    "phase46_ownership_bound_cas_admission.secret_material_recorded",
+    "phase46_ownership_bound_cas_admission.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -150,6 +152,18 @@ REQUIRED_PHASES = {
         "pre_admission_failure_no_mutation",
         "verification_latency_metrics_bounded",
         "verification_stress_sanitized",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase46_ownership_bound_cas_admission": [
+        "adaptive_limiter_bounded",
+        "limiter_rejection_typed",
+        "no_intent_id_on_limited",
+        "parsed_verifying_keys_reused",
+        "context_fingerprint_bound_cache",
+        "freshness_rechecked_on_cache_hit",
+        "validation_failure_adapts_capacity",
+        "sanitized_admission_metrics",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -441,6 +455,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("ownership_bound_cas_mode") == "ownership permit held through replicated CAS quorum and record advancement", failures, "unexpected ownership-bound CAS security note")
     check(notes.get("ownership_bound_cas_executor_mode") == "bounded worker-owned FIFO executor with sanitized contention metrics", failures, "unexpected ownership-bound CAS executor security note")
     check(notes.get("ownership_bound_cas_verifier_mode") == "parallel read-only pre-admission verification with ordered lock-held mutation revalidation", failures, "unexpected ownership-bound CAS verifier security note")
+    check(notes.get("ownership_bound_cas_admission_mode") == "bounded adaptive admission with context-bound parsed-key verification facts and live freshness checks", failures, "unexpected ownership-bound CAS admission security note")
 
     return {
         "artifact": str(artifact),

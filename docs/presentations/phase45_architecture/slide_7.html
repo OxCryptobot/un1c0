@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Typed failure paths</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            height: 120px;
+            padding: 0 80px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 40px;
+            color: #0A192F;
+        }
+        .content {
+            flex: 1;
+            padding: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 60px;
+        }
+        .strip-container {
+            display: flex;
+            width: 100%;
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+        }
+        .strip-item {
+            flex: 1;
+            padding: 30px 20px;
+            text-align: center;
+            border-right: 1px solid #0A192F;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .strip-item:last-child {
+            border-right: none;
+        }
+        .error-type {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            font-weight: 600;
+            color: #005A9C;
+            word-break: break-word;
+        }
+        .rule-box {
+            border-top: 1px solid #0A192F;
+            padding-top: 40px;
+        }
+        .rule-title {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 24px;
+            font-weight: 600;
+            color: #0A192F;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .rule-text {
+            font-size: 22px;
+            line-height: 1.6;
+            color: #333D47;
+        }
+        .rule-text strong {
+            color: #0A192F;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Typed failure paths: Fail closed, never guess</h1>
+        </div>
+        <div class="content">
+            <div class="strip-container">
+                <div class="strip-item">
+                    <div class="error-type">Verification<br>QueueFull</div>
+                </div>
+                <div class="strip-item">
+                    <div class="error-type">PreAdmission</div>
+                </div>
+                <div class="strip-item">
+                    <div class="error-type">Verification<br>EvidenceMismatch</div>
+                </div>
+                <div class="strip-item">
+                    <div class="error-type">Mutation</div>
+                </div>
+                <div class="strip-item">
+                    <div class="error-type">Shutdown</div>
+                </div>
+            </div>
+
+            <div class="rule-box">
+                <div class="rule-title">The Execution-Kernel Rule</div>
+                <div class="rule-text">
+                    Channel disconnect, worker termination, malformed signatures, forged hashes, stale ownership permits, quorum loss, and persistence failures are <strong>never converted into success</strong>. This strict fail-closed boundary keeps model and tool output safely below the authority boundary.
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

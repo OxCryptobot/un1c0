@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Phase 46: the next optimization boundary</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 120px 1fr auto;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            grid-column: 1 / 13;
+            grid-row: 1;
+            border-bottom: 1px solid #0A192F;
+            display: flex;
+            align-items: center;
+            padding-left: 80px;
+            padding-right: 80px;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 36px;
+            color: #0A192F;
+        }
+        .left-col {
+            grid-column: 1 / 8;
+            grid-row: 2;
+            border-right: 1px solid #0A192F;
+            padding-top: 50px;
+            padding-left: 80px;
+            padding-right: 50px;
+        }
+        .right-col {
+            grid-column: 8 / 13;
+            grid-row: 2;
+            padding-top: 50px;
+            padding-left: 50px;
+            padding-right: 80px;
+        }
+        h2 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 24px;
+            color: #005A9C;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 0;
+        }
+        .feature-list {
+            list-style-type: none;
+            margin-top: 30px;
+        }
+        .feature-item {
+            font-size: 20px;
+            line-height: 1.5;
+            margin-top: 25px;
+            position: relative;
+            padding-left: 25px;
+        }
+        .feature-item::before {
+            content: "■";
+            position: absolute;
+            left: 0;
+            color: #005A9C;
+            font-size: 12px;
+            top: 6px;
+        }
+        .feature-item strong {
+            color: #0A192F;
+            font-weight: 600;
+        }
+        .metrics-box {
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+            margin-top: 30px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+        .metric {
+            padding-top: 15px;
+            padding-left: 15px;
+            padding-right: 15px;
+            min-height: 80px;
+            border-bottom: 1px solid #0A192F;
+            border-right: 1px solid #0A192F;
+        }
+        .metric:nth-child(even) {
+            border-right: none;
+        }
+        .metric:nth-last-child(-n+2) {
+            border-bottom: none;
+        }
+        .metric-label {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            color: #005A9C;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .metric-value {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 24px;
+            font-weight: 600;
+            color: #0A192F;
+            margin-top: 5px;
+        }
+        .disclaimer {
+            margin-top: 25px;
+            font-size: 16px;
+            line-height: 1.5;
+            color: #333D47;
+            font-style: italic;
+            border-left: 4px solid #0A192F;
+            padding-left: 15px;
+        }
+        .footer-callout {
+            grid-column: 1 / 13;
+            grid-row: 3;
+            border-top: 1px solid #0A192F;
+            background-color: #E8EBEF;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding-left: 80px;
+            padding-right: 80px;
+        }
+        .closing-message {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 26px;
+            font-weight: 600;
+            color: #0A192F;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-align: center;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Phase 46: The next optimization boundary</h1>
+        </div>
+
+        <div class="left-col">
+            <h2>Adaptive Admission & Cost Reduction</h2>
+            <ul class="feature-list">
+                <li class="feature-item"><strong>Bounded in-flight limiter:</strong> Additive recovery and multiplicative decrease on verifier pressure.</li>
+                <li class="feature-item"><strong>Cryptographic caching:</strong> Parsed pinned-key reuse and context-fingerprint-bound exact cryptographic facts.</li>
+                <li class="feature-item"><strong>Live checks remain:</strong> Freshness, binding, quorum, nonce, ownership, and CAS authority are never cached.</li>
+            </ul>
+        </div>
+
+        <div class="right-col">
+            <h2>Hot-Key Replay Results</h2>
+            <div class="metrics-box">
+                <div class="metric">
+                    <div class="metric-label">Producers</div>
+                    <div class="metric-value">32</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Throughput</div>
+                    <div class="metric-value">1,083.9/s</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Cache Hits</div>
+                    <div class="metric-value">750</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Cache Misses</div>
+                    <div class="metric-value">18</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Verifier p95</div>
+                    <div class="metric-value">0.172 ms</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">E2E p95</div>
+                    <div class="metric-value">0.353 ms</div>
+                </div>
+            </div>
+            <div class="disclaimer">
+                This is optimization evidence from a sanitized local benchmark, not a distributed production claim.
+            </div>
+        </div>
+
+        <div class="footer-callout">
+            <div class="closing-message">
+                Parallelize facts; serialize authority;<br>adapt before queues become the outage.
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Security invariants</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            height: 120px;
+            padding: 0 80px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 40px;
+            color: #0A192F;
+        }
+        .content {
+            flex: 1;
+            padding: 40px 80px; /* reduced vertical padding to save height */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .authority-label {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            color: #D32F2F;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 2px solid #D32F2F;
+            background-color: #FFF;
+        }
+        th, td {
+            border: 1px solid #0A192F;
+            padding: 12px; /* reduced inner padding */
+            text-align: left;
+        }
+        th {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 20px;
+            color: #0A192F;
+            background-color: #E8EBEF;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        td {
+            font-size: 18px;
+            line-height: 1.5;
+        }
+        td:first-child {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            color: #005A9C;
+            width: 25%;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Security invariants: What Phase 45 refuses to weaken</h1>
+        </div>
+        <div class="content">
+            <div class="authority-label">Authoritative Mutation Boundary</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Invariant</th>
+                        <th>Enforcement</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Ownership epoch</td>
+                        <td>Phase 43 permit and epoch revalidated under the live ownership lock</td>
+                    </tr>
+                    <tr>
+                        <td>Record binding</td>
+                        <td>Owner, process, epoch, and record hash must match exactly</td>
+                    </tr>
+                    <tr>
+                        <td>CAS safety</td>
+                        <td>Current generation and content hash revalidated before persistence</td>
+                    </tr>
+                    <tr>
+                        <td>Quorum safety</td>
+                        <td>Distinct signed replica acknowledgements required before mutation</td>
+                    </tr>
+                    <tr>
+                        <td>Freshness</td>
+                        <td>Acknowledgement observed tick and TTL checked on every pre-admission call</td>
+                    </tr>
+                    <tr>
+                        <td>Failure behavior</td>
+                        <td>Forged evidence fails before mutation; stale/conflicting work fails closed at mutation</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

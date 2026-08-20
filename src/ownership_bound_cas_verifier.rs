@@ -36,7 +36,7 @@ pub enum OwnershipBoundCasVerifierError {
     WorkerPanicked,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct OwnershipBoundCasVerifierMetrics {
     pub submitted_intents: u64,
     pub pre_admitted_intents: u64,
@@ -59,6 +59,9 @@ pub struct OwnershipBoundCasVerifierMetrics {
     pub end_to_end_p50_us: u64,
     pub end_to_end_p95_us: u64,
     pub end_to_end_max_us: u64,
+    pub verification_cache_hits: u64,
+    pub verification_cache_misses: u64,
+    pub verification_cache_entries: usize,
 }
 
 #[derive(Debug, Default)]
@@ -168,6 +171,9 @@ impl VerifierMetricsState {
             end_to_end_p50_us: percentile(&self.end_to_end_us, 50),
             end_to_end_p95_us: percentile(&self.end_to_end_us, 95),
             end_to_end_max_us: self.end_to_end_us.iter().copied().max().unwrap_or(0),
+            verification_cache_hits: 0,
+            verification_cache_misses: 0,
+            verification_cache_entries: 0,
         }
     }
 }
@@ -228,6 +234,7 @@ impl OwnershipBoundCasVerifierTicket {
 
 #[derive(Debug)]
 pub struct OwnershipBoundCasVerifierPipeline {
+    context: CasPreAdmissionContext,
     verification_sender: Option<SyncSender<VerificationJob>>,
     next_intent_id: Mutex<u64>,
     metrics: Arc<Mutex<VerifierMetricsState>>,
@@ -273,7 +280,9 @@ impl OwnershipBoundCasVerifierPipeline {
         if queue_capacity == 0 {
             return Err(OwnershipBoundCasVerifierError::VerificationQueueFull);
         }
-        let context = coordinator.pre_admission_context();
+        let context = coordinator
+            .pre_admission_context()
+            .map_err(OwnershipBoundCasVerifierError::Mutation)?;
         let (verification_sender, verification_receiver) = mpsc::sync_channel(queue_capacity);
         let verification_receiver = Arc::new(Mutex::new(verification_receiver));
         let (result_sender, result_receiver) = mpsc::sync_channel(queue_capacity);
@@ -307,6 +316,7 @@ impl OwnershipBoundCasVerifierPipeline {
         }
 
         Ok(Self {
+            context,
             verification_sender: Some(verification_sender),
             next_intent_id: Mutex::new(1),
             metrics,
@@ -368,7 +378,12 @@ impl OwnershipBoundCasVerifierPipeline {
     }
 
     pub fn metrics(&self) -> OwnershipBoundCasVerifierMetrics {
-        self.metrics.lock().expect("metrics lock").snapshot()
+        let mut snapshot = self.metrics.lock().expect("metrics lock").snapshot();
+        let cache = self.context.cache_metrics();
+        snapshot.verification_cache_hits = cache.cache_hits;
+        snapshot.verification_cache_misses = cache.cache_misses;
+        snapshot.verification_cache_entries = cache.cache_entries;
+        snapshot
     }
 
     pub fn close(&mut self) -> Result<(), OwnershipBoundCasVerifierError> {

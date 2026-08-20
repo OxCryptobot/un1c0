@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sanitized stress evidence</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 120px 1fr auto;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            grid-column: 1 / 13;
+            grid-row: 1;
+            padding: 0 80px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 40px;
+            color: #0A192F;
+        }
+        .content {
+            grid-column: 2 / 12;
+            grid-row: 2;
+            padding: 40px 0; /* reduced from 60px to save vertical space */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+        }
+        th, td {
+            border: 1px solid #0A192F;
+            padding: 12px; /* reduced from 20px to shrink row heights without changing font size */
+            text-align: right;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 20px;
+            color: #0A192F;
+        }
+        th {
+            background-color: #E8EBEF;
+            font-weight: 600;
+            text-align: center;
+            color: #005A9C;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 16px;
+        }
+        td:first-child, th:first-child {
+            text-align: center;
+        }
+        .highlight-col {
+            background-color: #F4F5F6;
+            font-weight: 600;
+        }
+        .callout {
+            grid-column: 1 / 13;
+            grid-row: 3;
+            padding: 20px 80px; /* slightly reduced vertical padding */
+            border-top: 1px solid #0A192F;
+            font-size: 22px;
+            line-height: 1.6;
+            color: #333D47;
+            background-color: #FFF;
+        }
+        .callout strong {
+            color: #005A9C;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Sanitized stress evidence: Safety holds under 1–16 producers</h1>
+        </div>
+        <div class="content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Producers</th>
+                        <th>Jobs</th>
+                        <th>Successful Commits</th>
+                        <th>Fail-Closed Conflicts</th>
+                        <th>Throughput (intents/s)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>16</td>
+                        <td class="highlight-col">1</td>
+                        <td>15</td>
+                        <td>40.7</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>32</td>
+                        <td class="highlight-col">1</td>
+                        <td>31</td>
+                        <td>79.9</td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>64</td>
+                        <td class="highlight-col">1</td>
+                        <td>63</td>
+                        <td>159.7</td>
+                    </tr>
+                    <tr>
+                        <td>8</td>
+                        <td>128</td>
+                        <td class="highlight-col">1</td>
+                        <td>127</td>
+                        <td>243.1</td>
+                    </tr>
+                    <tr>
+                        <td>16</td>
+                        <td>256</td>
+                        <td class="highlight-col">1</td>
+                        <td>255</td>
+                        <td>264.0</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="callout">
+            <strong>Note:</strong> This is conflict-intent throughput, not successful durable-write throughput. The invariant is exactly one same-generation commit, regardless of contention.
+        </div>
+    </div>
+</body>
+</html>

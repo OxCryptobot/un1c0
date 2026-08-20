@@ -107,8 +107,8 @@ impl OwnershipBoundCasCoordinator {
         self.cas.state()
     }
 
-    pub fn pre_admission_context(&self) -> CasPreAdmissionContext {
-        self.cas.pre_admission_context()
+    pub fn pre_admission_context(&self) -> Result<CasPreAdmissionContext, OwnershipBoundCasError> {
+        Ok(self.cas.pre_admission_context()?)
     }
 
     pub fn admit_write(

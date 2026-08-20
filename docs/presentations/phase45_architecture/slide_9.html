@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Phase 45 validation evidence</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 120px 1fr;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            grid-column: 1 / 13;
+            grid-row: 1;
+            border-bottom: 1px solid #0A192F;
+            display: flex;
+            align-items: center;
+            padding-left: 80px;
+            padding-right: 80px;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 36px;
+            color: #0A192F;
+        }
+        .left-col {
+            grid-column: 1 / 9;
+            grid-row: 2;
+            border-right: 1px solid #0A192F;
+            padding-top: 40px;
+            padding-left: 80px;
+            padding-right: 40px;
+        }
+        .right-col {
+            grid-column: 9 / 13;
+            grid-row: 2;
+            padding-top: 40px;
+            padding-left: 40px;
+            padding-right: 80px;
+        }
+        h2 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 24px;
+            color: #005A9C;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .val-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .val-item {
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+            min-height: 64px;
+            display: flex;
+            align-items: center;
+            padding-left: 15px;
+            padding-right: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 15px;
+            color: #0A192F;
+            font-weight: 600;
+        }
+        .val-item::before {
+            content: "[PASS]";
+            color: #005A9C;
+            margin-right: 12px;
+        }
+        .sec-note {
+            border: 2px solid #0A192F;
+            background-color: #E8EBEF;
+            min-height: 140px;
+            padding-top: 20px;
+            padding-left: 20px;
+            padding-right: 20px;
+            margin-top: 30px;
+        }
+        .sec-title {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            color: #0A192F;
+            text-transform: uppercase;
+            font-size: 16px;
+            letter-spacing: 1px;
+        }
+        .sec-body {
+            font-size: 18px;
+            margin-top: 15px;
+            line-height: 1.5;
+        }
+        .ref-section {
+            margin-top: 50px;
+        }
+        .ref-title {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            color: #0A192F;
+            font-size: 20px;
+            border-bottom: 1px solid #0A192F;
+        }
+        .ref-list {
+            list-style-type: none;
+            margin-top: 20px;
+        }
+        .ref-item {
+            font-size: 16px;
+            margin-top: 15px;
+            line-height: 1.4;
+            position: relative;
+            padding-left: 15px;
+        }
+        .ref-item::before {
+            content: "■";
+            position: absolute;
+            left: 0;
+            color: #005A9C;
+            font-size: 10px;
+            top: 4px;
+        }
+        .ref-item code {
+            font-family: 'Courier New', Courier, monospace;
+            color: #005A9C;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Phase 45 validation evidence: 193/193 gates passed</h1>
+        </div>
+        <div class="left-col">
+            <h2>Validation Suites</h2>
+            <div class="val-grid">
+                <div class="val-item">Phase 41–45 regression suites</div>
+                <div class="val-item">Bounded worker & queue tests</div>
+                <div class="val-item">Forged-evidence isolation</div>
+                <div class="val-item">FIFO/ordered dispatch</div>
+                <div class="val-item">Stale/conflict revalidation</div>
+                <div class="val-item">All-target Rust tests</div>
+                <div class="val-item">Helm fail-closed validation</div>
+                <div class="val-item">Isolated Compose mTLS smoke</div>
+                <div class="val-item">Sanitized stress evidence</div>
+            </div>
+        </div>
+        <div class="right-col">
+            <h2>Security Note</h2>
+            <div class="sec-note">
+                <div class="sec-title">Execution Kernel Boundary</div>
+                <div class="sec-body">
+                    No secret material recorded.<br>
+                    No cluster mutation performed.
+                </div>
+            </div>
+
+            <div class="ref-section">
+                <div class="ref-title">External References</div>
+                <ul class="ref-list">
+                    <li class="ref-item">Rust bounded FIFO channels<br><code>std::sync::mpsc</code></li>
+                    <li class="ref-item">Ownership & message passing<br><code>The Rust Programming Language</code></li>
+                    <li class="ref-item">Ed25519 verification<br><code>RFC 8032</code></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

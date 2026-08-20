@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System boundary</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            height: 120px;
+            padding: 0 80px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 40px;
+            color: #0A192F;
+        }
+        .content {
+            flex: 1;
+            padding: 60px 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .pipeline-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        .block {
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+            padding: 20px;
+            width: 240px;
+            text-align: center;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: #0A192F;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100px;
+            position: relative;
+        }
+        .block.accent {
+            border: 1px solid #005A9C;
+            color: #005A9C;
+            background-color: #F4F5F6;
+        }
+        .block.authority {
+            border: 2px solid #0A192F;
+            background-color: #E8EBEF;
+        }
+        .arrow {
+            font-size: 24px;
+            color: #0A192F;
+            margin: 0 10px;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+        .callout {
+            border-top: 1px solid #0A192F;
+            padding-top: 30px;
+            font-size: 22px;
+            line-height: 1.6;
+            color: #333D47;
+            text-align: center;
+        }
+        .callout strong {
+            color: #005A9C;
+            font-weight: 600;
+        }
+        .authority-box {
+            border: 1px dashed #0A192F;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .authority-label {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            color: #0A192F;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: #F4F5F6;
+            padding: 0 10px;
+            margin-top: -30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>System boundary: One authority, one path</h1>
+        </div>
+        <div class="content">
+            <div class="pipeline-container">
+                <div class="row">
+                    <div class="block">Many producers</div>
+                    <div class="arrow">→</div>
+                    <div class="block">Bounded admission queue</div>
+                    <div class="arrow">→</div>
+                    <div class="block accent">Parallel read-only verifier pool</div>
+                    <div class="arrow">→</div>
+                    <div class="block">Ordered result dispatcher</div>
+                </div>
+
+                <div class="authority-box">
+                    <div class="authority-label">Authoritative Mutation Boundary</div>
+                    <div class="row" style="margin-bottom: 0;">
+                        <div class="block authority">Single mutation worker</div>
+                        <div class="arrow">→</div>
+                        <div class="block authority">Live Phase 43 revalidation</div>
+                        <div class="arrow">→</div>
+                        <div class="block authority">CAS + ownership persistence</div>
+                        <div class="arrow">→</div>
+                        <div class="block">Typed receipt</div>
+                    </div>
+                </div>
+            </div>
+            <div class="callout">
+                <strong>Pre-admission is an optimization:</strong> Phase 43 lock-held revalidation remains the security authority. Forged evidence fails early; stale evidence fails closed at mutation.
+            </div>
+        </div>
+    </div>
+</body>
+</html>

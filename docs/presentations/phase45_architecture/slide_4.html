@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>What runs in parallel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 120px 1fr;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            grid-column: 1 / 13;
+            grid-row: 1;
+            padding: 0 80px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 40px;
+            color: #0A192F;
+        }
+        .content {
+            grid-column: 1 / 13;
+            grid-row: 2;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+        .column {
+            padding: 30px 80px; /* reduced vertical padding from 60 -> 30 */
+            display: flex;
+            flex-direction: column;
+        }
+        .column-left {
+            border-right: 1px solid #0A192F;
+        }
+        h2 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 24px;
+            color: #005A9C;
+            margin-bottom: 30px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #005A9C;
+            padding-bottom: 10px;
+        }
+        .column-right h2 {
+            color: #0A192F;
+            border-bottom: 1px solid #0A192F;
+        }
+        ul {
+            list-style-type: none;
+        }
+        li {
+            font-size: 20px;
+            line-height: 1.5;
+            margin-bottom: 10px; /* reduced from 20 -> 10 */
+            padding-left: 20px;
+            position: relative;
+        }
+        li::before {
+            content: "■";
+            position: absolute;
+            left: 0;
+            color: #005A9C;
+            font-size: 12px;
+            top: 6px;
+        }
+        .column-right li::before {
+            color: #0A192F;
+        }
+        .summary-box {
+            margin-top: auto;
+            padding: 20px;
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+            font-size: 18px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>What runs in parallel: Read-only checks</h1>
+        </div>
+        <div class="content">
+            <div class="column column-left">
+                <h2>Parallel-safe (Read-only context)</h2>
+                <ul>
+                    <li>Request & acknowledgement shape validation</li>
+                    <li>Resource binding checks</li>
+                    <li>Writer & replica Ed25519 signatures</li>
+                    <li>Request content & event hashes</li>
+                    <li>Proposed-hash equality</li>
+                    <li>Request/acknowledgement binding</li>
+                    <li>Freshness & duplicate conflicts</li>
+                    <li>Distinct-replica quorum verification</li>
+                </ul>
+                <div class="summary-box">
+                    The context contains cloned identifiers, quorum policy, and pinned public-key registries. It is strictly read-only.
+                </div>
+            </div>
+            <div class="column column-right">
+                <h2>Never parallelized (Lock-held state)</h2>
+                <ul>
+                    <li>Ownership records & epochs</li>
+                    <li>CAS state & generations</li>
+                    <li>Nonce ledgers & idempotence</li>
+                    <li>Durable snapshots</li>
+                    <li>OS-backed locks</li>
+                </ul>
+                <div class="summary-box">
+                    The verifier cannot mutate state. Phase 43 lock-held revalidation remains the sole authority for state transitions.
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

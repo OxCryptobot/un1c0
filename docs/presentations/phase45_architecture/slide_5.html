@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ordered dispatch prevents reordering</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background-color: #F4F5F6;
+            color: #333D47;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: 120px 1fr auto;
+            border: 1px solid #0A192F;
+        }
+        .header {
+            grid-column: 1 / 13;
+            grid-row: 1;
+            padding: 0 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            border-bottom: 1px solid #0A192F;
+        }
+        h1 {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 600;
+            font-size: 36px;
+            color: #0A192F;
+            margin-bottom: 5px;
+        }
+        h2 {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-weight: 400;
+            font-size: 20px;
+            color: #005A9C;
+        }
+        .content-left {
+            grid-column: 1 / 5;
+            grid-row: 2;
+            padding: 40px 40px 40px 80px;
+            border-right: 1px solid #0A192F;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .content-right {
+            grid-column: 5 / 13;
+            grid-row: 2;
+            padding: 40px 80px 40px 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .description {
+            font-size: 20px;
+            line-height: 1.6;
+            color: #333D47;
+        }
+        .description p {
+            margin-bottom: 20px;
+        }
+        .callout {
+            grid-column: 1 / 13;
+            grid-row: 3;
+            padding: 12px 80px; /* reduced vertical padding to save height */
+            border-top: 1px solid #0A192F;
+            font-size: 20px;
+            line-height: 1.6;
+            color: #333D47;
+            background-color: #E8EBEF;
+        }
+        .callout strong {
+            color: #0A192F;
+            font-weight: 600;
+        }
+
+        /* Sequence Diagram Styles */
+        .seq-diagram {
+            position: relative;
+            width: 100%;
+            height: 340px; /* reduced to lower overall slide height */
+            border: 1px solid #0A192F;
+            background-color: #FFF;
+            padding-top: 20px;
+        }
+        .lifeline {
+            position: absolute;
+            top: 60px;
+            bottom: 20px;
+            width: 1px;
+            background-color: #0A192F;
+            z-index: 1;
+        }
+        .participant {
+            position: absolute;
+            top: 20px;
+            height: 40px;
+            background-color: #F4F5F6;
+            border: 1px solid #0A192F;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: #0A192F;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+            text-align: center;
+        }
+        .msg {
+            position: absolute;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            color: #005A9C;
+            text-align: center;
+            height: 24px;
+            z-index: 3;
+        }
+        .msg-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background-color: #005A9C;
+        }
+        .msg-arrow {
+            position: absolute;
+            right: -6px;
+            bottom: -9px;
+            font-size: 16px;
+            color: #005A9C;
+        }
+        .msg-text {
+            position: absolute;
+            bottom: 4px;
+            width: 100%;
+            text-align: center;
+            background-color: #FFF;
+            padding: 0 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Ordered dispatch prevents reordering</h1>
+            <h2>Parallel completion; serial state transition</h2>
+        </div>
+
+        <div class="content-left">
+            <div class="description">
+                <p>Each accepted submission receives a contiguous intent ID only after bounded queue admission.</p>
+                <p>Verifier workers may finish out of order due to varying cryptographic workloads.</p>
+                <p>A bounded ordered dispatcher buffers results in a <code>BTreeMap</code> and forwards only the next expected ID to the mutation worker.</p>
+            </div>
+        </div>
+
+        <div class="content-right">
+            <div class="seq-diagram">
+                <!-- Lifelines -->
+                <div class="lifeline" style="left: 12.5%;"></div>
+                <div class="lifeline" style="left: 37.5%;"></div>
+                <div class="lifeline" style="left: 62.5%;"></div>
+                <div class="lifeline" style="left: 87.5%;"></div>
+
+                <!-- Participants -->
+                <div class="participant" style="left: 2.5%; width: 20%;">Producers</div>
+                <div class="participant" style="left: 27.5%; width: 20%;">Verifier workers</div>
+                <div class="participant" style="left: 52.5%; width: 20%;">Ordered dispatcher</div>
+                <div class="participant" style="left: 77.5%; width: 20%;">Mutation worker</div>
+
+                <!-- Messages -->
+                <div class="msg" style="top: 90px; left: 12.5%; width: 25%;">
+                    <div class="msg-text">intent 1, 2, 3</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 130px; left: 37.5%; width: 25%;">
+                    <div class="msg-text">result 2 (buffered)</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 170px; left: 37.5%; width: 25%;">
+                    <div class="msg-text">result 1</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 210px; left: 62.5%; width: 25%;">
+                    <div class="msg-text">intent 1</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 250px; left: 62.5%; width: 25%;">
+                    <div class="msg-text">intent 2</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 290px; left: 37.5%; width: 25%;">
+                    <div class="msg-text">result 3</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+                <div class="msg" style="top: 330px; left: 62.5%; width: 25%;">
+                    <div class="msg-text">intent 3</div>
+                    <div class="msg-line"><div class="msg-arrow">►</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="callout">
+            <strong>Queue-full rejection does not consume an intent ID</strong>, preventing a permanent dispatcher gap and ensuring contiguous sequence numbers for all admitted work.
+        </div>
+    </div>
+</body>
+</html>

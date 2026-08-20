@@ -27,5 +27,5 @@ grep -q '"cluster_mutation_performed": false' "$TMP_DIR/benchmark.json"
 grep -q 'ownership_claim_signature_required' scripts/collect_security_compliance_metrics.py
 grep -q 'managed_recovery_distinct_quorum' scripts/collect_security_compliance_metrics.py
 grep -q 'phase42_cross_process_ownership' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 193' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 201' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 42 cross-process ownership validation passed.'
