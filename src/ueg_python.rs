@@ -10,10 +10,14 @@ pub fn lower_to_python(ueg: &Ueg) -> String {
         let crate::walker::NodeKind::Lambda(l) = n;
         out.push_str(&format!("def {}(", l.name));
         for (i, (pn, pt)) in l.params.iter().enumerate() {
-            if i > 0 { out.push_str(", "); }
+            if i > 0 {
+                out.push_str(", ");
+            }
             if pt != "_" {
                 out.push_str(&format!("{}: {}", pn, map_type_python(pt)));
-            } else { out.push_str(pn); }
+            } else {
+                out.push_str(pn);
+            }
         }
         if let Some(r) = &l.ret {
             out.push_str(&format!(") -> {}:", map_type_python(r)));
@@ -26,7 +30,9 @@ pub fn lower_to_python(ueg: &Ueg) -> String {
             // compute minimal leading indent across non-empty lines
             let mut min_indent: Option<usize> = None;
             for line in &l.orig_body {
-                if line.trim().is_empty() { continue }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 let count = line.chars().take_while(|c| *c == ' ').count();
                 min_indent = Some(min_indent.map_or(count, |m| m.min(count)));
             }
@@ -36,13 +42,22 @@ pub fn lower_to_python(ueg: &Ueg) -> String {
             // non-empty orig line starts with "def ", emit orig_body as the entire function
             // (including decorators). Otherwise fall back to emitting the generated signature + orig body.
             let mut first_non_empty = None;
-            for line in &l.orig_body { if !line.trim().is_empty() { first_non_empty = Some(line); break } }
+            for line in &l.orig_body {
+                if !line.trim().is_empty() {
+                    first_non_empty = Some(line);
+                    break;
+                }
+            }
             if let Some(first) = first_non_empty {
                 if first.trim_start().starts_with("def ") || first.trim_start().starts_with('@') {
                     // emit orig_body lines with preserved indentation shifted to 4 spaces
                     for line in &l.orig_body {
                         out.push_str("    ");
-                        let stripped = if line.len() > min_indent { line[min_indent..].to_string() } else { line.trim_start().to_string() };
+                        let stripped = if line.len() > min_indent {
+                            line[min_indent..].to_string()
+                        } else {
+                            line.trim_start().to_string()
+                        };
                         out.push_str(&stripped);
                         out.push('\n');
                     }
@@ -51,7 +66,11 @@ pub fn lower_to_python(ueg: &Ueg) -> String {
                     // otherwise, emit generated signature and then the original body lines
                     for line in &l.orig_body {
                         out.push_str("    ");
-                        let stripped = if line.len() > min_indent { line[min_indent..].to_string() } else { line.trim_start().to_string() };
+                        let stripped = if line.len() > min_indent {
+                            line[min_indent..].to_string()
+                        } else {
+                            line.trim_start().to_string()
+                        };
                         out.push_str(&stripped);
                         out.push('\n');
                     }
@@ -75,25 +94,37 @@ pub fn lower_to_python(ueg: &Ueg) -> String {
                 }
             }
             // return expr; -> return expr
-            if python_line.trim_start().starts_with("return ") && python_line.trim_end().ends_with(';') {
+            if python_line.trim_start().starts_with("return ")
+                && python_line.trim_end().ends_with(';')
+            {
                 python_line = python_line.trim_end_matches(';').to_string();
             }
             // println! -> print
             if python_line.contains("println!(") {
-                python_line = python_line.replace("println!(\"{ }\",", "print(").replace(");", ")");
+                python_line = python_line
+                    .replace("println!(\"{ }\",", "print(")
+                    .replace(");", ")");
             }
             // convert simple if/brace forms
-            if python_line.trim_end().ends_with("{") && python_line.trim_start().starts_with("if ") {
-                let cond = python_line.trim().trim_end_matches('{').trim_start_matches("if").trim();
+            if python_line.trim_end().ends_with("{") && python_line.trim_start().starts_with("if ")
+            {
+                let cond = python_line
+                    .trim()
+                    .trim_end_matches('{')
+                    .trim_start_matches("if")
+                    .trim();
                 python_line = format!("if {}:", cond);
             }
             // drop closing brace tokens
-            if python_line.trim() == "}" { python_line.clear(); }
+            if python_line.trim() == "}" {
+                python_line.clear();
+            }
 
             // Preserve docstrings that passed through as TODO comments
             if python_line.trim_start().starts_with("// TODO:") {
                 let inner = python_line.trim_start_matches("// TODO:").trim();
-                if inner.starts_with("\"\"\"") || inner.starts_with("'''") || inner.starts_with('"') {
+                if inner.starts_with("\"\"\"") || inner.starts_with("'''") || inner.starts_with('"')
+                {
                     out.push_str(inner);
                     out.push('\n');
                     continue;
