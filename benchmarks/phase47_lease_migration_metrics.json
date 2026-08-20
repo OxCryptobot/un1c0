@@ -1,0 +1,1 @@
+{"benchmark":"repeated distributed lease migration handoffs","cluster_mutation_performed":false,"final_epoch":129,"final_state":"Activated","phase":47,"rounds":128,"rounds_completed":128,"secret_material_recorded":false,"throughput_rounds_per_sec":25.12984780343074,"wall_us":5093544.5770000005,"witness_acknowledgements":256}

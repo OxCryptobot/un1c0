@@ -55,5 +55,5 @@ PY
 grep -q 'adaptive_limiter_bounded' scripts/collect_security_compliance_metrics.py
 grep -q 'context_fingerprint_bound_cache' scripts/collect_security_compliance_metrics.py
 grep -q 'phase46_ownership_bound_cas_admission' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 201' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 209' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 46 adaptive admission validation passed.'

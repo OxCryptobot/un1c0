@@ -48,5 +48,5 @@ PY
 grep -q 'parallel_pre_admission_workers' scripts/collect_security_compliance_metrics.py
 grep -q 'ordered_mutation_dispatch' scripts/collect_security_compliance_metrics.py
 grep -q 'phase45_ownership_bound_cas_verifier' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 201' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 209' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 45 ownership-bound CAS verifier validation passed.'

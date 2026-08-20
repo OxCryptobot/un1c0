@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 201
+EXPECTED_GATE_COUNT = 209
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -32,6 +32,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase45_ownership_bound_cas_verifier.cluster_mutation_performed",
     "phase46_ownership_bound_cas_admission.secret_material_recorded",
     "phase46_ownership_bound_cas_admission.cluster_mutation_performed",
+    "phase47_lease_migration.secret_material_recorded",
+    "phase47_lease_migration.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -164,6 +166,18 @@ REQUIRED_PHASES = {
         "freshness_rechecked_on_cache_hit",
         "validation_failure_adapts_capacity",
         "sanitized_admission_metrics",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase47_lease_migration": [
+        "signed_intent_binding",
+        "distinct_witness_quorum",
+        "source_drain_enforced",
+        "release_before_activation",
+        "strict_destination_epoch",
+        "replay_and_conflict_safe",
+        "expiry_and_stale_evidence_rejected",
+        "durable_snapshot_partition_safe",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],

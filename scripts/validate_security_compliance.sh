@@ -109,6 +109,8 @@ printf '%s\n' '== Phase 45 ownership-bound CAS verifier =='
 scripts/validate_phase45_ownership_bound_cas_verifier.sh >"$TMP_DIR/phase45-ownership-bound-cas-verifier.log"
 printf '%s\n' '== Phase 46 adaptive ownership-bound CAS admission =='
 scripts/validate_phase46_adaptive_admission.sh >"$TMP_DIR/phase46-adaptive-admission.log"
+printf '%s\n' '== Phase 47 distributed multi-region lease migration =='
+scripts/validate_phase47_lease_migration.sh >"$TMP_DIR/phase47-lease-migration.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

@@ -43,5 +43,5 @@ PY
 grep -q 'bounded_executor_queue' scripts/collect_security_compliance_metrics.py
 grep -q 'worker_owned_mutation' scripts/collect_security_compliance_metrics.py
 grep -q 'phase44_ownership_bound_cas_executor' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 201' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 209' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 44 ownership-bound CAS executor validation passed.'

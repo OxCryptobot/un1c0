@@ -1,0 +1,76 @@
+{
+  "summary": {
+    "measurement_scope": "local sanitized Rust process benchmark; not a production capacity claim",
+    "gc_interpretation": "Rust has no tracing GC in this path; allocator pressure is inferred from RSS/high-water, virtual-memory reservation, thread count, and bounded retry/bookkeeping activity",
+    "producer_levels": [
+      32,
+      64,
+      96
+    ],
+    "rss_growth_32_to_96_kb": 3588,
+    "hwm_growth_32_to_96_kb": 3532,
+    "vm_peak_growth_32_to_96_kb": 132940,
+    "thread_growth_32_to_96": 64,
+    "rss_growth_factor_32_to_96": 1.5479535736102628,
+    "hwm_growth_factor_32_to_96": 1.5215593620791494,
+    "vm_peak_growth_factor_32_to_96": 1.7480642837850005,
+    "cache_hit_ratio_at_96": 0.9990234375,
+    "limiter_retries_per_job_at_96": 31.343912760416668,
+    "successful_commits_at_96": 1,
+    "failed_outcomes_at_96": 6143,
+    "caveat": "The hot-key benchmark intentionally reuses one CAS generation, so after the first valid commit subsequent outcomes are expected conflicts; failure count is not an allocator or protocol-crash count."
+  },
+  "rows": [
+    {
+      "producers": 32,
+      "jobs": 2048,
+      "peak_rss_kb": 6548,
+      "peak_hwm_kb": 6772,
+      "peak_vm_peak_kb": 177712,
+      "peak_threads": 52,
+      "rss_per_producer_kb": 204.625,
+      "hwm_per_producer_kb": 211.625,
+      "vm_peak_per_producer_kb": 5553.5,
+      "limiter_retries_per_job": 1.4189453125,
+      "verification_cache_hit_ratio": 0.9969075520833334,
+      "verification_service_p95_us": 1259,
+      "end_to_end_p95_us": 3089,
+      "successful_commits": 1,
+      "failed_outcomes": 2047
+    },
+    {
+      "producers": 64,
+      "jobs": 4096,
+      "peak_rss_kb": 8668,
+      "peak_hwm_kb": 8860,
+      "peak_vm_peak_kb": 244268,
+      "peak_threads": 84,
+      "rss_per_producer_kb": 135.4375,
+      "hwm_per_producer_kb": 138.4375,
+      "vm_peak_per_producer_kb": 3816.6875,
+      "limiter_retries_per_job": 5.74072265625,
+      "verification_cache_hit_ratio": 0.9984537760416666,
+      "verification_service_p95_us": 1648,
+      "end_to_end_p95_us": 5557,
+      "successful_commits": 1,
+      "failed_outcomes": 4095
+    },
+    {
+      "producers": 96,
+      "jobs": 6144,
+      "peak_rss_kb": 10136,
+      "peak_hwm_kb": 10304,
+      "peak_vm_peak_kb": 310652,
+      "peak_threads": 116,
+      "rss_per_producer_kb": 105.58333333333333,
+      "hwm_per_producer_kb": 107.33333333333333,
+      "vm_peak_per_producer_kb": 3235.9583333333335,
+      "limiter_retries_per_job": 31.343912760416668,
+      "verification_cache_hit_ratio": 0.9990234375,
+      "verification_service_p95_us": 6950,
+      "end_to_end_p95_us": 15926,
+      "successful_commits": 1,
+      "failed_outcomes": 6143
+    }
+  ]
+}
