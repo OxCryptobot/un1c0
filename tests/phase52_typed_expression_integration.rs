@@ -21,7 +21,7 @@ fn first_lambda(ueg: &Ueg) -> &un1c0::walker::LambdaNode {
 
 #[test]
 fn expressions_are_typed_serializable_and_source_spanned() {
-    let source = "def calculate(value: int) -> int:\n    if value >= 1 and value < 10:\n        return add(value + 1, 2 * value)\n";
+    let source = "def calculate(value: int) -> int:\n    if value >= 1 and value < 10:\n        return max(value + 1, 2 * value)\n";
     let ueg = parse_ueg(source);
     assert!(ueg.validate());
     let lambda = first_lambda(&ueg);
@@ -50,7 +50,7 @@ fn expressions_are_typed_serializable_and_source_spanned() {
     assert!(matches!(returned.kind, ExpressionKind::Call { .. }));
     assert_eq!(
         &source[returned.span.start_byte..returned.span.end_byte],
-        "add(value + 1, 2 * value)"
+        "max(value + 1, 2 * value)"
     );
 
     let serialized = serde_json::to_string(&lambda.ast_fragment).expect("serialize typed AST");
@@ -130,7 +130,7 @@ fn unsupported_expression_is_diagnostic_and_generation_fails_closed() {
 
 #[test]
 fn typed_ast_drives_deterministic_emitter_hints() {
-    let source = "def calculate(value: int) -> int:\n    if value >= 1:\n        return add(value + 1, 2 * value)\n";
+    let source = "def calculate(value: int) -> int:\n    if value >= 1:\n        return max(value + 1, 2 * value)\n";
     let ueg = parse_ueg(source);
     let mut generator = IncrementalCodeGenerator::new(TargetBinding::Rust);
     let chunk = generator

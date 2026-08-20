@@ -206,6 +206,9 @@ fn referenced_names(lambda: &crate::walker::LambdaNode) -> BTreeSet<String> {
             StatementKind::Return { expression } => {
                 names.extend(identifier_tokens(&expression.source))
             }
+            StatementKind::Assign { value, .. } => {
+                names.extend(identifier_tokens(&value.source));
+            }
             StatementKind::TupleAssign { values, .. } => {
                 for value in values {
                     names.extend(identifier_tokens(&value.source));

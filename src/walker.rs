@@ -130,6 +130,10 @@ pub enum StatementKind {
     Return {
         expression: TypedExpression,
     },
+    Assign {
+        target: TypedExpression,
+        value: TypedExpression,
+    },
     TupleAssign {
         targets: Vec<TypedExpression>,
         values: Vec<TypedExpression>,
@@ -540,9 +544,27 @@ fn statement_kind(
         if let Some((left, right)) = source.split_once('=') {
             let targets = split_top_level_commas_with_offsets(left);
             let values = split_top_level_commas_with_offsets(right);
+            let left_offset = indent;
+            let right_offset = indent + source.find('=').unwrap_or(0) + 1;
+            if targets.len() == 1 && values.len() == 1 && is_identifier_expression(&targets[0].0) {
+                return StatementKind::Assign {
+                    target: expression_from_trimmed(
+                        &targets[0].0,
+                        raw_line,
+                        line_idx,
+                        line_start,
+                        left_offset + targets[0].1,
+                    ),
+                    value: expression_from_trimmed(
+                        &values[0].0,
+                        raw_line,
+                        line_idx,
+                        line_start,
+                        right_offset + values[0].1,
+                    ),
+                };
+            }
             if targets.len() > 1 && targets.len() == values.len() {
-                let left_offset = indent;
-                let right_offset = indent + source.find('=').unwrap_or(0) + 1;
                 return StatementKind::TupleAssign {
                     targets: targets
                         .iter()
@@ -690,7 +712,8 @@ fn expression_kind(
     {
         let left = source[..operator_offset].trim();
         let right = source[operator_offset + operator_length..].trim();
-        let left_offset = offset + source[..operator_offset].len() - left.len();
+        let left_offset =
+            offset + source[..operator_offset].len() - source[..operator_offset].trim_start().len();
         let right_offset = offset
             + operator_offset
             + operator_length
@@ -884,6 +907,10 @@ fn diagnostics_for_statements(statements: &[TypedStatement]) -> Vec<UegDiagnosti
                 expression: condition,
             } => {
                 collect_expression_diagnostics(condition, &mut diagnostics);
+            }
+            StatementKind::Assign { target, value } => {
+                collect_expression_diagnostics(target, &mut diagnostics);
+                collect_expression_diagnostics(value, &mut diagnostics);
             }
             StatementKind::TupleAssign { targets, values } => {
                 for expression in targets.iter().chain(values) {

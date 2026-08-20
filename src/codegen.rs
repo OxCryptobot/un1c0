@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use crate::lock_free_buffer_pool::{LockFreeBufferPool, PooledBuffer};
+use crate::semantic::{validate_ueg_for_target, SemanticValidationReport};
 use crate::targets::{lower_to_go, lower_to_zig};
 use crate::ueg_python::lower_to_python;
 use crate::walker::{
@@ -83,6 +84,7 @@ pub enum GenerationError {
     CursorRewind { cursor: usize, node_count: usize },
     EmitterOutput { target: TargetBinding },
     Sink { message: String },
+    SemanticValidation { report: SemanticValidationReport },
 }
 
 impl Display for GenerationError {
@@ -106,6 +108,12 @@ impl Display for GenerationError {
             Self::Sink { message } => {
                 write!(formatter, "generation sink rejected a chunk: {message}")
             }
+            Self::SemanticValidation { report } => write!(
+                formatter,
+                "{} semantic validation errors for {} target",
+                report.error_count(),
+                report.target.label()
+            ),
         }
     }
 }
@@ -135,7 +143,7 @@ impl IncrementalCodeGenerator {
     }
 
     pub fn next_chunk(&mut self, ueg: &Ueg) -> Result<Option<GeneratedChunk>, GenerationError> {
-        validate_generation_input(ueg)?;
+        validate_generation_input(ueg, self.target)?;
         if self.next_node_index > ueg.nodes.len() {
             return Err(GenerationError::CursorRewind {
                 cursor: self.next_node_index,
@@ -167,7 +175,7 @@ impl IncrementalCodeGenerator {
         F: FnMut(GeneratedChunk) -> Result<(), E>,
         E: Display,
     {
-        validate_generation_input(ueg)?;
+        validate_generation_input(ueg, self.target)?;
         let mut stats = GenerationStats {
             target: self.target,
             chunks_emitted: 0,
@@ -226,21 +234,25 @@ pub fn generate_incrementally(
     IncrementalCodeGenerator::new(target).emit_to_string(ueg)
 }
 
-fn validate_generation_input(ueg: &Ueg) -> Result<(), GenerationError> {
-    if ueg.validate() {
-        return Ok(());
+fn validate_generation_input(ueg: &Ueg, target: TargetBinding) -> Result<(), GenerationError> {
+    if !ueg.validate() {
+        let diagnostic_count = ueg
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.severity,
+                    crate::walker::DiagnosticSeverity::Error
+                )
+            })
+            .count();
+        return Err(GenerationError::InvalidUeg { diagnostic_count });
     }
-    let diagnostic_count = ueg
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| {
-            matches!(
-                diagnostic.severity,
-                crate::walker::DiagnosticSeverity::Error
-            )
-        })
-        .count();
-    Err(GenerationError::InvalidUeg { diagnostic_count })
+    let report = validate_ueg_for_target(ueg, target);
+    if !report.is_valid() {
+        return Err(GenerationError::SemanticValidation { report });
+    }
+    Ok(())
 }
 
 fn node_emitter_hints(node: &NodeKind) -> EmitterHints {
@@ -271,6 +283,10 @@ fn ast_emitter_hints(ast: &AstFragment) -> EmitterHints {
             }
             StatementKind::Return { expression } | StatementKind::Print { expression } => {
                 count_expression_hints(expression, &mut hints);
+            }
+            StatementKind::Assign { target, value } => {
+                count_expression_hints(target, &mut hints);
+                count_expression_hints(value, &mut hints);
             }
             StatementKind::TupleAssign { targets, values } => {
                 for expression in targets.iter().chain(values) {
