@@ -45,9 +45,11 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "b77a58205353d44cc247c5484e03da3bbf71e332",
+  "commit": "7202f994e6ae6ce7a859196c0216dcbb1269895c",
   "gates": {
+    "active_worker_resource_snapshot": "passed",
     "asymmetric_partition_replayable": "passed",
+    "atomic_order_under_concurrency": "passed",
     "atomic_queue_cutover": "passed",
     "atomic_recovery_cutover": "passed",
     "authenticated_ack_binding": "passed",
@@ -64,11 +66,15 @@
     "compaction_quorum_admission": "passed",
     "compaction_recovery": "passed",
     "compose_mtls_smoke": "passed",
+    "concurrent_completion_accounting": "passed",
+    "concurrent_failure_propagation": "passed",
     "concurrent_partition_race_single_commit": "passed",
+    "concurrent_persistence_bounds": "passed",
     "configuration_bound_snapshots": "passed",
     "conflicting_quorum_split_brain_rejected": "passed",
     "connection_epoch_replay_window_enforced": "passed",
     "consensus_telemetry_signature_required": "passed",
+    "contention_timing_recorded": "passed",
     "crash_retry_queue_retention": "passed",
     "cross_host_chaos_duplicate_idempotent": "passed",
     "cross_host_queue_ownership": "passed",
@@ -177,6 +183,7 @@
     "stale_multi_leader_log_rejected": "passed",
     "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
+    "stale_staging_recovery_counted": "passed",
     "stale_telemetry_blocks_promotion": "passed",
     "stale_transport_replay_rejected": "passed",
     "supervision_requires_complete_consumer_coverage": "passed",
@@ -190,10 +197,11 @@
     "transport_receiver_binding_required": "passed",
     "transport_receiver_epoch_churn_safe": "passed",
     "trusted_key_cluster_epoch_binding": "passed",
+    "unique_staging_target_accounting": "passed",
     "valid_path_resource_metrics": "passed",
     "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-19T22:35:31.244572+00:00",
+  "generated_at_utc": "2026-08-20T01:42:39.316763+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -714,6 +722,18 @@
     "staging_recovery_bounded": true,
     "valid_path_resource_metrics": true
   },
+  "phase40_high_throughput_persistence": {
+    "active_worker_resource_snapshot": true,
+    "atomic_order_under_concurrency": true,
+    "cluster_mutation_performed": false,
+    "concurrent_completion_accounting": true,
+    "concurrent_failure_propagation": true,
+    "concurrent_persistence_bounds": true,
+    "contention_timing_recorded": true,
+    "secret_material_recorded": false,
+    "stale_staging_recovery_counted": true,
+    "unique_staging_target_accounting": true
+  },
   "repository_search_before_after": {
     "baseline_errors": 0,
     "baseline_p95_ms": 37.202256,
@@ -730,6 +750,7 @@
     "external_sink_mode": "durable file-backed idempotent outbox",
     "fencing_supervision_mode": "signed authority heartbeat plus exact consumer acknowledgements",
     "fuzz_mode": "deterministic epoch churn with sanitized counters",
+    "high_throughput_persistence_mode": "bounded concurrent unique staging with atomic rename and active-worker resource capture",
     "resource_durability_mode": "bounded local fsync, atomic rename, and process-resource instrumentation",
     "secret_material_recorded": false,
     "snapshot_mode": "atomic durable JSON with hash validation",
