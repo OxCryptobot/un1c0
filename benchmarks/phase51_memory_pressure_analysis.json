@@ -1,0 +1,109 @@
+{
+  "phase": 51,
+  "baseline": [
+    {
+      "producers": 128,
+      "jobs": 8192,
+      "peak_rss_kb": 11332,
+      "peak_hwm_kb": 11496,
+      "peak_vm_peak_kb": 377044,
+      "peak_threads": 148,
+      "limiter_retries": 2715065,
+      "limiter_retries_per_job": 331.4288330078125,
+      "end_to_end_p95_us": 106964,
+      "verification_wait_p95_us": 2371,
+      "cache_hit_ratio": 0.9991861979166666,
+      "successful_commits": 1,
+      "failed_outcomes": 8191
+    },
+    {
+      "producers": 160,
+      "jobs": 10240,
+      "peak_rss_kb": 12852,
+      "peak_hwm_kb": 12976,
+      "peak_vm_peak_kb": 443600,
+      "peak_threads": 180,
+      "limiter_retries": 26512060,
+      "limiter_retries_per_job": 2589.068359375,
+      "end_to_end_p95_us": 28566,
+      "verification_wait_p95_us": 41,
+      "cache_hit_ratio": 0.9993489583333334,
+      "successful_commits": 1,
+      "failed_outcomes": 10239
+    },
+    {
+      "producers": 192,
+      "jobs": 12288,
+      "peak_rss_kb": 13964,
+      "peak_hwm_kb": 14088,
+      "peak_vm_peak_kb": 509976,
+      "peak_threads": 212,
+      "limiter_retries": 26538656,
+      "limiter_retries_per_job": 2159.7213541666665,
+      "end_to_end_p95_us": 15228,
+      "verification_wait_p95_us": 147,
+      "cache_hit_ratio": 0.9994845920138888,
+      "successful_commits": 1,
+      "failed_outcomes": 12287
+    }
+  ],
+  "pool": [
+    {
+      "producers": 128,
+      "operations": 16384,
+      "operations_per_sec": 15426.274611663594,
+      "peak_rss_kb": 3196,
+      "peak_hwm_kb": 3328,
+      "peak_vm_peak_kb": 336012,
+      "peak_threads": 77,
+      "reused": 16368,
+      "fresh_allocations": 16,
+      "returns": 16384,
+      "dropped_full": 0,
+      "dropped_oversize": 0,
+      "reuse_ratio": 0.9990234375
+    },
+    {
+      "producers": 192,
+      "operations": 24576,
+      "operations_per_sec": 63019.93885629929,
+      "peak_rss_kb": 3792,
+      "peak_hwm_kb": 3824,
+      "peak_vm_peak_kb": 468108,
+      "peak_threads": 159,
+      "reused": 24566,
+      "fresh_allocations": 10,
+      "returns": 24576,
+      "dropped_full": 0,
+      "dropped_oversize": 0,
+      "reuse_ratio": 0.9995930989583334
+    },
+    {
+      "producers": 256,
+      "operations": 32768,
+      "operations_per_sec": 41645.51987498058,
+      "peak_rss_kb": 4296,
+      "peak_hwm_kb": 4364,
+      "peak_vm_peak_kb": 600336,
+      "peak_threads": 252,
+      "reused": 32757,
+      "fresh_allocations": 11,
+      "returns": 32768,
+      "dropped_full": 0,
+      "dropped_oversize": 0,
+      "reuse_ratio": 0.999664306640625
+    }
+  ],
+  "interpretation": {
+    "cas_expected_conflict_fixture": true,
+    "cas_allocator_attribution": false,
+    "pool_lock_free_queue": true,
+    "pool_bounded_capacity": 512,
+    "pool_bounded_slots": 64,
+    "pool_dropped_buffers": 0,
+    "pool_reuse_ratio_min": 0.9990234375,
+    "rss_growth_128_to_192": 1.2322626191316626,
+    "vm_peak_growth_128_to_192": 1.352563626526347,
+    "thread_growth_128_to_192": 64
+  }
+}

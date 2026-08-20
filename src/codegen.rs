@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 
+use crate::lock_free_buffer_pool::{LockFreeBufferPool, PooledBuffer};
 use crate::targets::{lower_to_go, lower_to_zig};
 use crate::ueg_python::lower_to_python;
 use crate::walker::{lower_to_rust, NodeKind, Ueg};
@@ -181,6 +182,28 @@ impl IncrementalCodeGenerator {
         })?;
         Ok((output, stats))
     }
+
+    pub fn emit_to_pooled_buffer(
+        &mut self,
+        ueg: &Ueg,
+        pool: &LockFreeBufferPool,
+    ) -> Result<(PooledBuffer, GenerationStats), GenerationError> {
+        let mut output = pool.checkout();
+        output.extend_from_slice(self.target.preamble().as_bytes());
+        let stats = self.emit_remaining(ueg, |chunk| {
+            output.extend_from_slice(chunk.code.as_bytes());
+            Ok::<(), std::convert::Infallible>(())
+        })?;
+        Ok((output, stats))
+    }
+}
+
+pub fn generate_incrementally_with_pool(
+    ueg: &Ueg,
+    target: TargetBinding,
+    pool: &LockFreeBufferPool,
+) -> Result<(PooledBuffer, GenerationStats), GenerationError> {
+    IncrementalCodeGenerator::new(target).emit_to_pooled_buffer(ueg, pool)
 }
 
 pub fn generate_incrementally(
