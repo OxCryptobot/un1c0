@@ -45,7 +45,7 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "04c0e78b2a4024b8b23398bc8207456b43bc6f7f",
+  "commit": "51195d262034ee93fb507cf7e7d3a74f7f10b0ba",
   "gates": {
     "active_worker_resource_snapshot": "passed",
     "adaptive_limiter_bounded": "passed",
@@ -91,8 +91,10 @@
     "cross_host_chaos_duplicate_idempotent": "passed",
     "cross_host_queue_ownership": "passed",
     "cross_node_compaction_coordination": "passed",
+    "destination_epoch_strictly_increases": "passed",
     "deterministic_queue_full_backpressure": "passed",
     "directory_fsync_latency_recorded": "passed",
+    "distinct_lease_migration_witness_quorum": "passed",
     "distinct_observer_quorum_required": "passed",
     "durable_cas_snapshot_hash_bound": "passed",
     "durable_compaction_manifests": "passed",
@@ -132,6 +134,9 @@
     "joint_to_final_membership_ordering": "passed",
     "leader_lease_read_optimization": "passed",
     "lease_expiry_fences_delivery": "passed",
+    "lease_migration_replay_conflict_safe": "passed",
+    "lease_migration_snapshot_recovery_safe": "passed",
+    "lease_migration_stale_evidence_rejected": "passed",
     "limiter_rejection_typed": "passed",
     "linearizable_read_consistency": "passed",
     "log_compaction_safety": "passed",
@@ -198,6 +203,7 @@
     "sanitized_concurrency_metrics": "passed",
     "sanitized_durability_evidence": "passed",
     "shutdown_rejects_new_intents": "passed",
+    "signed_lease_migration_intent": "passed",
     "signed_region_failure_observation_required": "passed",
     "signed_replay_manifest_required": "passed",
     "signer_rotation_revocation": "passed",
@@ -216,6 +222,8 @@
     "socket_boundary_crash_injection": "passed",
     "socket_layer_backpressure": "passed",
     "socket_quota_epoch_reset": "passed",
+    "source_drain_before_prepare": "passed",
+    "source_release_before_activation": "passed",
     "split_brain_commit_exclusion": "passed",
     "staging_recovery_bounded": "passed",
     "stale_authority_blocks_readiness": "passed",
@@ -249,7 +257,7 @@
     "witness_quorum_arbitration_required": "passed",
     "worker_owned_mutation": "passed"
   },
-  "generated_at_utc": "2026-08-20T15:13:52.044893+00:00",
+  "generated_at_utc": "2026-08-20T15:45:51.856177+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -853,6 +861,18 @@
     "sanitized_admission_metrics": true,
     "secret_material_recorded": false,
     "validation_failure_adapts_capacity": true
+  },
+  "phase47_lease_migration": {
+    "cluster_mutation_performed": false,
+    "distinct_witness_quorum": true,
+    "durable_snapshot_partition_safe": true,
+    "expiry_and_stale_evidence_rejected": true,
+    "release_before_activation": true,
+    "replay_and_conflict_safe": true,
+    "secret_material_recorded": false,
+    "signed_intent_binding": true,
+    "source_drain_enforced": true,
+    "strict_destination_epoch": true
   },
   "repository_search_before_after": {
     "baseline_errors": 0,
