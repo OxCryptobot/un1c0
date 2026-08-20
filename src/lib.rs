@@ -1,5 +1,6 @@
 pub mod agentic;
 pub mod consensus;
+pub mod cross_process_ownership;
 pub mod disaster_recovery;
 pub mod evolution;
 pub mod external_fencing_supervision;
@@ -27,6 +28,7 @@ pub mod walker;
 // Re-export selected items for integration tests and consumers.
 pub use agentic::*;
 pub use consensus::*;
+pub use cross_process_ownership::*;
 pub use disaster_recovery::*;
 pub use evolution::*;
 pub use external_fencing_supervision::*;

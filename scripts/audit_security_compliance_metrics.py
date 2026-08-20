@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 161
+EXPECTED_GATE_COUNT = 169
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -22,6 +22,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase40_high_throughput_persistence.cluster_mutation_performed",
     "phase41_replicated_durability.secret_material_recorded",
     "phase41_replicated_durability.cluster_mutation_performed",
+    "phase42_cross_process_ownership.secret_material_recorded",
+    "phase42_cross_process_ownership.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -94,6 +96,18 @@ REQUIRED_PHASES = {
         "nonce_retry_idempotent",
         "cas_commit_atomic_on_failure",
         "durable_cas_snapshot_hash_bound",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase42_cross_process_ownership": [
+        "ownership_claim_signature_required",
+        "atomic_cross_process_lock",
+        "ownership_epoch_fencing",
+        "owner_bound_lease_lifecycle",
+        "stale_staging_cleanup",
+        "managed_recovery_state_fail_closed",
+        "managed_recovery_distinct_quorum",
+        "recovery_evidence_hash_bound",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -381,6 +395,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("resource_durability_mode") == "bounded local fsync, atomic rename, and process-resource instrumentation", failures, "unexpected resource durability security note")
     check(notes.get("high_throughput_persistence_mode") == "bounded concurrent unique staging with atomic rename and active-worker resource capture", failures, "unexpected high-throughput persistence security note")
     check(notes.get("replicated_durability_mode") == "signed replica acknowledgements with quorum-gated single-writer compare-and-swap", failures, "unexpected replicated durability security note")
+    check(notes.get("cross_process_ownership_mode") == "atomic ownership lease epochs with hash-bound managed-volume recovery quorum", failures, "unexpected cross-process ownership security note")
 
     return {
         "artifact": str(artifact),

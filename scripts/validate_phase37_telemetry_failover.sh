@@ -20,5 +20,5 @@ grep -q '"secret_material_recorded": false' "$TMP_DIR/benchmark.json"
 
 grep -q 'consensus_telemetry_signature_required' scripts/collect_security_compliance_metrics.py
 grep -q 'reservation_store_fuzz_no_panic' scripts/collect_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 161' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 169' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 37 telemetry, failover, and epoch-churn fuzz validation passed.'
