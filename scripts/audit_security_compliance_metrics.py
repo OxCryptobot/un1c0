@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 145
+EXPECTED_GATE_COUNT = 153
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -18,6 +18,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase38_external_fencing_supervision.cluster_mutation_performed",
     "phase39_resource_durability.secret_material_recorded",
     "phase39_resource_durability.cluster_mutation_performed",
+    "phase40_high_throughput_persistence.secret_material_recorded",
+    "phase40_high_throughput_persistence.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -66,6 +68,18 @@ REQUIRED_PHASES = {
         "staging_recovery_bounded",
         "resource_budget_fail_closed",
         "sanitized_durability_evidence",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase40_high_throughput_persistence": [
+        "concurrent_persistence_bounds",
+        "atomic_order_under_concurrency",
+        "unique_staging_target_accounting",
+        "stale_staging_recovery_counted",
+        "concurrent_completion_accounting",
+        "contention_timing_recorded",
+        "active_worker_resource_snapshot",
+        "concurrent_failure_propagation",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -351,6 +365,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("fuzz_mode") == "deterministic epoch churn with sanitized counters", failures, "unexpected fuzz security note")
     check(notes.get("fencing_supervision_mode") == "signed authority heartbeat plus exact consumer acknowledgements", failures, "unexpected fencing supervision security note")
     check(notes.get("resource_durability_mode") == "bounded local fsync, atomic rename, and process-resource instrumentation", failures, "unexpected resource durability security note")
+    check(notes.get("high_throughput_persistence_mode") == "bounded concurrent unique staging with atomic rename and active-worker resource capture", failures, "unexpected high-throughput persistence security note")
 
     return {
         "artifact": str(artifact),
