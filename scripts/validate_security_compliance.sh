@@ -103,6 +103,8 @@ printf '%s\n' '== Phase 42 cross-process ownership and managed-volume recovery =
 scripts/validate_phase42_cross_process_ownership.sh >"$TMP_DIR/phase42-cross-process-ownership.log"
 printf '%s\n' '== Phase 43 ownership-bound replicated CAS =='
 scripts/validate_phase43_ownership_bound_cas.sh >"$TMP_DIR/phase43-ownership-bound-cas.log"
+printf '%s\n' '== Phase 44 ownership-bound CAS executor =='
+scripts/validate_phase44_ownership_bound_cas_executor.sh >"$TMP_DIR/phase44-ownership-bound-cas-executor.log"
 
 printf '%s\n' '== isolated Compose mTLS =='
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-podman} PODMAN_SUDO=${PODMAN_SUDO:-1} \

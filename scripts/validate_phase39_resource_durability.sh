@@ -26,5 +26,5 @@ grep -q '"cluster_mutation_performed": false' "$TMP_DIR/benchmark.json"
 grep -q 'authority_owner_region_signed' scripts/collect_security_compliance_metrics.py
 grep -q 'file_fsync_latency_recorded' scripts/collect_security_compliance_metrics.py
 grep -q 'phase39_resource_durability' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 177' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 185' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 39 resource and durability validation passed.'
