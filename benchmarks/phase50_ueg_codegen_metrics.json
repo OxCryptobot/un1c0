@@ -1,0 +1,285 @@
+{
+  "phase": 50,
+  "iterations": 64,
+  "function_counts": [
+    {
+      "functions": 1,
+      "source_bytes": 215,
+      "parser": {
+        "parsed_nodes": 1,
+        "parse_p50_us": 282,
+        "parse_p95_us": 397,
+        "parse_max_us": 619,
+        "parse_per_function_p95_us": 397,
+        "baseline_single_function_p95_us": 397
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 1,
+          "bytes": 249,
+          "generation_p50_us": 6,
+          "generation_p95_us": 7,
+          "generation_max_us": 18
+        },
+        {
+          "target": "go",
+          "chunks": 1,
+          "bytes": 234,
+          "generation_p50_us": 26,
+          "generation_p95_us": 57,
+          "generation_max_us": 119
+        },
+        {
+          "target": "zig",
+          "chunks": 1,
+          "bytes": 269,
+          "generation_p50_us": 27,
+          "generation_p95_us": 30,
+          "generation_max_us": 39
+        },
+        {
+          "target": "python",
+          "chunks": 1,
+          "bytes": 214,
+          "generation_p50_us": 5,
+          "generation_p95_us": 6,
+          "generation_max_us": 8
+        }
+      ]
+    },
+    {
+      "functions": 2,
+      "source_bytes": 430,
+      "parser": {
+        "parsed_nodes": 2,
+        "parse_p50_us": 617,
+        "parse_p95_us": 900,
+        "parse_max_us": 992,
+        "parse_per_function_p95_us": 450,
+        "baseline_single_function_p95_us": 467
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 2,
+          "bytes": 498,
+          "generation_p50_us": 23,
+          "generation_p95_us": 28,
+          "generation_max_us": 42
+        },
+        {
+          "target": "go",
+          "chunks": 2,
+          "bytes": 440,
+          "generation_p50_us": 90,
+          "generation_p95_us": 107,
+          "generation_max_us": 127
+        },
+        {
+          "target": "zig",
+          "chunks": 2,
+          "bytes": 509,
+          "generation_p50_us": 95,
+          "generation_p95_us": 112,
+          "generation_max_us": 122
+        },
+        {
+          "target": "python",
+          "chunks": 2,
+          "bytes": 429,
+          "generation_p50_us": 18,
+          "generation_p95_us": 18,
+          "generation_max_us": 32
+        }
+      ]
+    },
+    {
+      "functions": 4,
+      "source_bytes": 860,
+      "parser": {
+        "parsed_nodes": 4,
+        "parse_p50_us": 1141,
+        "parse_p95_us": 1725,
+        "parse_max_us": 1932,
+        "parse_per_function_p95_us": 431,
+        "baseline_single_function_p95_us": 332
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 4,
+          "bytes": 996,
+          "generation_p50_us": 25,
+          "generation_p95_us": 33,
+          "generation_max_us": 48
+        },
+        {
+          "target": "go",
+          "chunks": 4,
+          "bytes": 852,
+          "generation_p50_us": 106,
+          "generation_p95_us": 120,
+          "generation_max_us": 137
+        },
+        {
+          "target": "zig",
+          "chunks": 4,
+          "bytes": 989,
+          "generation_p50_us": 113,
+          "generation_p95_us": 134,
+          "generation_max_us": 239
+        },
+        {
+          "target": "python",
+          "chunks": 4,
+          "bytes": 859,
+          "generation_p50_us": 21,
+          "generation_p95_us": 27,
+          "generation_max_us": 41
+        }
+      ]
+    },
+    {
+      "functions": 8,
+      "source_bytes": 1720,
+      "parser": {
+        "parsed_nodes": 8,
+        "parse_p50_us": 2198,
+        "parse_p95_us": 2758,
+        "parse_max_us": 2929,
+        "parse_per_function_p95_us": 344,
+        "baseline_single_function_p95_us": 340
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 8,
+          "bytes": 1992,
+          "generation_p50_us": 53,
+          "generation_p95_us": 72,
+          "generation_max_us": 98
+        },
+        {
+          "target": "go",
+          "chunks": 8,
+          "bytes": 1676,
+          "generation_p50_us": 213,
+          "generation_p95_us": 285,
+          "generation_max_us": 379
+        },
+        {
+          "target": "zig",
+          "chunks": 8,
+          "bytes": 1949,
+          "generation_p50_us": 227,
+          "generation_p95_us": 308,
+          "generation_max_us": 373
+        },
+        {
+          "target": "python",
+          "chunks": 8,
+          "bytes": 1719,
+          "generation_p50_us": 44,
+          "generation_p95_us": 59,
+          "generation_max_us": 70
+        }
+      ]
+    },
+    {
+      "functions": 16,
+      "source_bytes": 3446,
+      "parser": {
+        "parsed_nodes": 16,
+        "parse_p50_us": 4283,
+        "parse_p95_us": 5032,
+        "parse_max_us": 5382,
+        "parse_per_function_p95_us": 314,
+        "baseline_single_function_p95_us": 312
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 16,
+          "bytes": 3990,
+          "generation_p50_us": 109,
+          "generation_p95_us": 137,
+          "generation_max_us": 193
+        },
+        {
+          "target": "go",
+          "chunks": 16,
+          "bytes": 3330,
+          "generation_p50_us": 430,
+          "generation_p95_us": 549,
+          "generation_max_us": 697
+        },
+        {
+          "target": "zig",
+          "chunks": 16,
+          "bytes": 3875,
+          "generation_p50_us": 454,
+          "generation_p95_us": 661,
+          "generation_max_us": 777
+        },
+        {
+          "target": "python",
+          "chunks": 16,
+          "bytes": 3445,
+          "generation_p50_us": 144,
+          "generation_p95_us": 166,
+          "generation_max_us": 184
+        }
+      ]
+    },
+    {
+      "functions": 32,
+      "source_bytes": 6902,
+      "parser": {
+        "parsed_nodes": 32,
+        "parse_p50_us": 8422,
+        "parse_p95_us": 9881,
+        "parse_max_us": 12441,
+        "parse_per_function_p95_us": 308,
+        "baseline_single_function_p95_us": 333
+      },
+      "generation": [
+        {
+          "target": "rust",
+          "chunks": 32,
+          "bytes": 7990,
+          "generation_p50_us": 216,
+          "generation_p95_us": 232,
+          "generation_max_us": 311
+        },
+        {
+          "target": "go",
+          "chunks": 32,
+          "bytes": 6642,
+          "generation_p50_us": 859,
+          "generation_p95_us": 950,
+          "generation_max_us": 973
+        },
+        {
+          "target": "zig",
+          "chunks": 32,
+          "bytes": 7731,
+          "generation_p50_us": 911,
+          "generation_p95_us": 1087,
+          "generation_max_us": 1264
+        },
+        {
+          "target": "python",
+          "chunks": 32,
+          "bytes": 6901,
+          "generation_p50_us": 172,
+          "generation_p95_us": 188,
+          "generation_max_us": 242
+        }
+      ]
+    }
+  ],
+  "secret_material_recorded": false,
+  "cluster_mutation_performed": false,
+  "workload": "deterministic Phase 49 multi-function UEG parsing versus single-function baseline with incremental target generation"
+}

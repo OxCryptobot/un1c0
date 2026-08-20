@@ -1,0 +1,337 @@
+{
+  "phase": 50,
+  "source_artifact": "benchmarks/phase50_ueg_codegen_metrics.json",
+  "memory_artifact": "benchmarks/phase47_memory_profile_metrics.json",
+  "parser_scaling": [
+    {
+      "functions": 1,
+      "source_bytes": 215,
+      "parse_p50_us": 282,
+      "parse_p95_us": 397,
+      "parse_max_us": 619,
+      "parse_per_function_p95_us": 397,
+      "p95_vs_single_function": 1.0,
+      "nodes": 1
+    },
+    {
+      "functions": 2,
+      "source_bytes": 430,
+      "parse_p50_us": 617,
+      "parse_p95_us": 900,
+      "parse_max_us": 992,
+      "parse_per_function_p95_us": 450,
+      "p95_vs_single_function": 2.2670025188916876,
+      "nodes": 2
+    },
+    {
+      "functions": 4,
+      "source_bytes": 860,
+      "parse_p50_us": 1141,
+      "parse_p95_us": 1725,
+      "parse_max_us": 1932,
+      "parse_per_function_p95_us": 431,
+      "p95_vs_single_function": 4.345088161209068,
+      "nodes": 4
+    },
+    {
+      "functions": 8,
+      "source_bytes": 1720,
+      "parse_p50_us": 2198,
+      "parse_p95_us": 2758,
+      "parse_max_us": 2929,
+      "parse_per_function_p95_us": 344,
+      "p95_vs_single_function": 6.947103274559194,
+      "nodes": 8
+    },
+    {
+      "functions": 16,
+      "source_bytes": 3446,
+      "parse_p50_us": 4283,
+      "parse_p95_us": 5032,
+      "parse_max_us": 5382,
+      "parse_per_function_p95_us": 314,
+      "p95_vs_single_function": 12.675062972292192,
+      "nodes": 16
+    },
+    {
+      "functions": 32,
+      "source_bytes": 6902,
+      "parse_p50_us": 8422,
+      "parse_p95_us": 9881,
+      "parse_max_us": 12441,
+      "parse_per_function_p95_us": 308,
+      "p95_vs_single_function": 24.889168765743072,
+      "nodes": 32
+    }
+  ],
+  "target_generation_scaling": [
+    {
+      "functions": 1,
+      "target": "rust",
+      "bytes": 249,
+      "chunks": 1,
+      "generation_p50_us": 6,
+      "generation_p95_us": 7,
+      "generation_max_us": 18
+    },
+    {
+      "functions": 1,
+      "target": "go",
+      "bytes": 234,
+      "chunks": 1,
+      "generation_p50_us": 26,
+      "generation_p95_us": 57,
+      "generation_max_us": 119
+    },
+    {
+      "functions": 1,
+      "target": "zig",
+      "bytes": 269,
+      "chunks": 1,
+      "generation_p50_us": 27,
+      "generation_p95_us": 30,
+      "generation_max_us": 39
+    },
+    {
+      "functions": 1,
+      "target": "python",
+      "bytes": 214,
+      "chunks": 1,
+      "generation_p50_us": 5,
+      "generation_p95_us": 6,
+      "generation_max_us": 8
+    },
+    {
+      "functions": 2,
+      "target": "rust",
+      "bytes": 498,
+      "chunks": 2,
+      "generation_p50_us": 23,
+      "generation_p95_us": 28,
+      "generation_max_us": 42
+    },
+    {
+      "functions": 2,
+      "target": "go",
+      "bytes": 440,
+      "chunks": 2,
+      "generation_p50_us": 90,
+      "generation_p95_us": 107,
+      "generation_max_us": 127
+    },
+    {
+      "functions": 2,
+      "target": "zig",
+      "bytes": 509,
+      "chunks": 2,
+      "generation_p50_us": 95,
+      "generation_p95_us": 112,
+      "generation_max_us": 122
+    },
+    {
+      "functions": 2,
+      "target": "python",
+      "bytes": 429,
+      "chunks": 2,
+      "generation_p50_us": 18,
+      "generation_p95_us": 18,
+      "generation_max_us": 32
+    },
+    {
+      "functions": 4,
+      "target": "rust",
+      "bytes": 996,
+      "chunks": 4,
+      "generation_p50_us": 25,
+      "generation_p95_us": 33,
+      "generation_max_us": 48
+    },
+    {
+      "functions": 4,
+      "target": "go",
+      "bytes": 852,
+      "chunks": 4,
+      "generation_p50_us": 106,
+      "generation_p95_us": 120,
+      "generation_max_us": 137
+    },
+    {
+      "functions": 4,
+      "target": "zig",
+      "bytes": 989,
+      "chunks": 4,
+      "generation_p50_us": 113,
+      "generation_p95_us": 134,
+      "generation_max_us": 239
+    },
+    {
+      "functions": 4,
+      "target": "python",
+      "bytes": 859,
+      "chunks": 4,
+      "generation_p50_us": 21,
+      "generation_p95_us": 27,
+      "generation_max_us": 41
+    },
+    {
+      "functions": 8,
+      "target": "rust",
+      "bytes": 1992,
+      "chunks": 8,
+      "generation_p50_us": 53,
+      "generation_p95_us": 72,
+      "generation_max_us": 98
+    },
+    {
+      "functions": 8,
+      "target": "go",
+      "bytes": 1676,
+      "chunks": 8,
+      "generation_p50_us": 213,
+      "generation_p95_us": 285,
+      "generation_max_us": 379
+    },
+    {
+      "functions": 8,
+      "target": "zig",
+      "bytes": 1949,
+      "chunks": 8,
+      "generation_p50_us": 227,
+      "generation_p95_us": 308,
+      "generation_max_us": 373
+    },
+    {
+      "functions": 8,
+      "target": "python",
+      "bytes": 1719,
+      "chunks": 8,
+      "generation_p50_us": 44,
+      "generation_p95_us": 59,
+      "generation_max_us": 70
+    },
+    {
+      "functions": 16,
+      "target": "rust",
+      "bytes": 3990,
+      "chunks": 16,
+      "generation_p50_us": 109,
+      "generation_p95_us": 137,
+      "generation_max_us": 193
+    },
+    {
+      "functions": 16,
+      "target": "go",
+      "bytes": 3330,
+      "chunks": 16,
+      "generation_p50_us": 430,
+      "generation_p95_us": 549,
+      "generation_max_us": 697
+    },
+    {
+      "functions": 16,
+      "target": "zig",
+      "bytes": 3875,
+      "chunks": 16,
+      "generation_p50_us": 454,
+      "generation_p95_us": 661,
+      "generation_max_us": 777
+    },
+    {
+      "functions": 16,
+      "target": "python",
+      "bytes": 3445,
+      "chunks": 16,
+      "generation_p50_us": 144,
+      "generation_p95_us": 166,
+      "generation_max_us": 184
+    },
+    {
+      "functions": 32,
+      "target": "rust",
+      "bytes": 7990,
+      "chunks": 32,
+      "generation_p50_us": 216,
+      "generation_p95_us": 232,
+      "generation_max_us": 311
+    },
+    {
+      "functions": 32,
+      "target": "go",
+      "bytes": 6642,
+      "chunks": 32,
+      "generation_p50_us": 859,
+      "generation_p95_us": 950,
+      "generation_max_us": 973
+    },
+    {
+      "functions": 32,
+      "target": "zig",
+      "bytes": 7731,
+      "chunks": 32,
+      "generation_p50_us": 911,
+      "generation_p95_us": 1087,
+      "generation_max_us": 1264
+    },
+    {
+      "functions": 32,
+      "target": "python",
+      "bytes": 6901,
+      "chunks": 32,
+      "generation_p50_us": 172,
+      "generation_p95_us": 188,
+      "generation_max_us": 242
+    }
+  ],
+  "memory_pressure_review": {
+    "rows": [
+      {
+        "producers": 32,
+        "peak_rss_kb": 6548,
+        "peak_hwm_kb": 6772,
+        "peak_vm_peak_kb": 177712,
+        "peak_threads": 52,
+        "limiter_retries": 2906,
+        "jobs": 2048,
+        "limiter_retries_per_job": 1.4189453125,
+        "cache_hit_ratio": 0.9969075520833334,
+        "end_to_end_p95_us": 3089,
+        "failed_outcomes": 2047,
+        "successful_commits": 1
+      },
+      {
+        "producers": 64,
+        "peak_rss_kb": 8668,
+        "peak_hwm_kb": 8860,
+        "peak_vm_peak_kb": 244268,
+        "peak_threads": 84,
+        "limiter_retries": 23514,
+        "jobs": 4096,
+        "limiter_retries_per_job": 5.74072265625,
+        "cache_hit_ratio": 0.9984537760416666,
+        "end_to_end_p95_us": 5557,
+        "failed_outcomes": 4095,
+        "successful_commits": 1
+      },
+      {
+        "producers": 96,
+        "peak_rss_kb": 10136,
+        "peak_hwm_kb": 10304,
+        "peak_vm_peak_kb": 310652,
+        "peak_threads": 116,
+        "limiter_retries": 192577,
+        "jobs": 6144,
+        "limiter_retries_per_job": 31.343912760416668,
+        "cache_hit_ratio": 0.9990234375,
+        "end_to_end_p95_us": 15926,
+        "failed_outcomes": 6143,
+        "successful_commits": 1
+      }
+    ],
+    "rss_growth_factor_32_to_96": 1.5479535736102628,
+    "vm_peak_growth_factor_32_to_96": 1.7480642837850005,
+    "thread_growth_32_to_96": 64,
+    "expected_conflict_fixture": true,
+    "gc_pause_measurement": false,
+    "allocator_attribution": false
+  }
+}

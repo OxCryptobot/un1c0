@@ -1,4 +1,5 @@
 pub mod agentic;
+pub mod codegen;
 pub mod consensus;
 pub mod cross_process_ownership;
 pub mod disaster_recovery;
@@ -32,6 +33,7 @@ pub mod walker;
 
 // Re-export selected items for integration tests and consumers.
 pub use agentic::*;
+pub use codegen::*;
 pub use consensus::*;
 pub use cross_process_ownership::*;
 pub use disaster_recovery::*;
