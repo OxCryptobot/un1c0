@@ -45,10 +45,11 @@
     ]
   },
   "benchmark_concurrency": 8,
-  "commit": "42b2ab06f63e2aa30544b2559042d99e23b58306",
+  "commit": "d62e952eea9aa6e25910fa522cafccb59f0923fd",
   "gates": {
     "active_worker_resource_snapshot": "passed",
     "asymmetric_partition_replayable": "passed",
+    "atomic_cross_process_lock": "passed",
     "atomic_order_under_concurrency": "passed",
     "atomic_queue_cutover": "passed",
     "atomic_recovery_cutover": "passed",
@@ -121,6 +122,8 @@
     "lease_expiry_fences_delivery": "passed",
     "linearizable_read_consistency": "passed",
     "log_compaction_safety": "passed",
+    "managed_recovery_distinct_quorum": "passed",
+    "managed_recovery_state_fail_closed": "passed",
     "multi_leader_proposal_signature_required": "passed",
     "multi_region_retry_reaches_quorum": "passed",
     "network_stress_packet_corruption": "passed",
@@ -129,6 +132,9 @@
     "observer_quorum_admission": "passed",
     "old_region_fenced_on_commit": "passed",
     "one_witness_vote_per_round": "passed",
+    "owner_bound_lease_lifecycle": "passed",
+    "ownership_claim_signature_required": "passed",
+    "ownership_epoch_fencing": "passed",
     "ownership_transfer_clears_fence": "passed",
     "partial_staging_cleanup": "passed",
     "per_peer_socket_quotas": "passed",
@@ -141,6 +147,7 @@
     "quorum_loss_fences_delivery": "passed",
     "quota_recovery_after_restart": "passed",
     "receive_window_admission": "passed",
+    "recovery_evidence_hash_bound": "passed",
     "region_topology_deterministic": "passed",
     "remote_audit_ordering": "passed",
     "remote_audit_outbox_durability": "passed",
@@ -191,6 +198,7 @@
     "stale_multi_leader_log_rejected": "passed",
     "stale_or_conflicting_failover_rejected": "passed",
     "stale_owner_fenced_after_heal": "passed",
+    "stale_staging_cleanup": "passed",
     "stale_staging_recovery_counted": "passed",
     "stale_telemetry_blocks_promotion": "passed",
     "stale_transport_replay_rejected": "passed",
@@ -209,7 +217,7 @@
     "valid_path_resource_metrics": "passed",
     "witness_quorum_arbitration_required": "passed"
   },
-  "generated_at_utc": "2026-08-20T02:09:47.773539+00:00",
+  "generated_at_utc": "2026-08-20T02:41:19.408665+00:00",
   "operations": [
     {
       "baseline_errors": 0,
@@ -754,6 +762,18 @@
     "replicated_ack_quorum_required": true,
     "secret_material_recorded": false
   },
+  "phase42_cross_process_ownership": {
+    "atomic_cross_process_lock": true,
+    "cluster_mutation_performed": false,
+    "managed_recovery_distinct_quorum": true,
+    "managed_recovery_state_fail_closed": true,
+    "owner_bound_lease_lifecycle": true,
+    "ownership_claim_signature_required": true,
+    "ownership_epoch_fencing": true,
+    "recovery_evidence_hash_bound": true,
+    "secret_material_recorded": false,
+    "stale_staging_cleanup": true
+  },
   "repository_search_before_after": {
     "baseline_errors": 0,
     "baseline_p95_ms": 37.202256,
@@ -767,6 +787,7 @@
   },
   "security_notes": {
     "cluster_mutation_performed": false,
+    "cross_process_ownership_mode": "atomic ownership lease epochs with hash-bound managed-volume recovery quorum",
     "external_sink_mode": "durable file-backed idempotent outbox",
     "fencing_supervision_mode": "signed authority heartbeat plus exact consumer acknowledgements",
     "fuzz_mode": "deterministic epoch churn with sanitized counters",
