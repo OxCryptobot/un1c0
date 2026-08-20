@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+
 use tree_sitter::Node;
 
 // Clean single-file implementation: UEG types, entropy gate, python->UEG->Rust
@@ -6,11 +7,69 @@ use tree_sitter::Node;
 #[derive(Debug, Clone)]
 pub struct Ueg {
     pub nodes: Vec<NodeKind>,
+    pub diagnostics: Vec<UegDiagnostic>,
 }
 
 #[derive(Debug, Clone)]
 pub enum NodeKind {
     Lambda(LambdaNode),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SourceSpan {
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiagnosticSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UegDiagnostic {
+    pub code: String,
+    pub message: String,
+    pub severity: DiagnosticSeverity,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementKind {
+    If {
+        condition: String,
+    },
+    Return {
+        expression: String,
+    },
+    TupleAssign {
+        targets: Vec<String>,
+        values: Vec<String>,
+    },
+    RangeLoop {
+        target: String,
+        start: String,
+        end: String,
+        inclusive: bool,
+    },
+    Print {
+        expression: String,
+    },
+    Unsupported {
+        source: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedStatement {
+    pub kind: StatementKind,
+    pub span: SourceSpan,
 }
 
 #[allow(dead_code)]
@@ -24,14 +83,25 @@ pub struct LambdaNode {
     pub orig_body: Vec<String>,
     // small structured AST fragment (JSON-like string) to aid emitters
     pub ast_fragment: Option<String>,
+    pub source_span: SourceSpan,
+    pub statements: Vec<TypedStatement>,
+    pub diagnostics: Vec<UegDiagnostic>,
 }
 
 impl Ueg {
     pub fn new() -> Self {
-        Ueg { nodes: Vec::new() }
+        Ueg {
+            nodes: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
+
     pub fn validate(&self) -> bool {
         !self.nodes.is_empty()
+            && !self
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
     }
 }
 
@@ -114,138 +184,292 @@ pub fn python_to_rust(_root: &Node, source: &[u8]) -> String {
     lower_to_rust(&ueg)
 }
 
-/// Build a UEG from Python source without lowering it to a target.
+/// Build a typed, multi-function UEG from Python source without lowering it to a target.
 #[allow(dead_code)]
 pub fn python_to_ueg(_root: &Node, source: &[u8]) -> Ueg {
     let src = String::from_utf8_lossy(source).to_string();
-    // re-use same parsing logic as python_to_rust to produce the UEG
-    let mut name = String::new();
-    let mut params: Vec<(String, String)> = Vec::new();
-    let mut ret: Option<String> = None;
-    let mut body_lines: Vec<String> = Vec::new();
-
-    // collect all lines for indexed access so we can capture decorators and exact text
     let lines: Vec<&str> = src.lines().collect();
-    let mut orig_lines: Vec<String> = Vec::new();
-    for (line_idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("def ") {
+    let line_starts = line_starts(&src);
+    let mut ueg = Ueg::new();
+
+    for line_idx in 0..lines.len() {
+        if !is_top_level_definition(lines[line_idx]) {
             continue;
         }
-        // capture decorators above the def
-        let mut start_idx = line_idx;
-        while start_idx > 0 {
-            let prev = lines[start_idx - 1].trim_start();
-            if prev.starts_with("@") || prev.starts_with("#") {
-                start_idx -= 1;
-                continue;
-            }
-            if prev.is_empty() {
-                start_idx -= 1;
-                continue;
-            }
-            break;
-        }
-        // record exact original lines from start_idx until next top-level def or EOF
-        let mut idx = start_idx;
-        while idx < lines.len() {
-            let t = lines[idx].trim_start();
-            if idx > line_idx && t.starts_with("def ") {
-                break;
-            }
-            orig_lines.push(lines[idx].to_string());
-            idx += 1;
-        }
 
-        let sig = trimmed.trim_end_matches(':').trim();
-        let rest = sig.trim_start_matches("def").trim();
-        name = rest.split('(').next().unwrap_or("").trim().to_string();
-        if let Some(pstart) = rest.find('(') {
-            if let Some(pend) = rest.find(')') {
-                for p in rest[pstart + 1..pend].split(',') {
-                    let p = p.trim();
-                    if p.is_empty() {
-                        continue;
-                    }
-                    if let Some(colon) = p.find(':') {
-                        let nm = p[..colon].trim().to_string();
-                        let ann = p[colon + 1..].trim();
-                        params.push((nm, map_type(ann)));
-                    } else {
-                        params.push((p.to_string(), "_".into()));
-                    }
-                }
-            }
-            if let Some(arrow) = rest.find("->") {
-                let after = rest[arrow + 2..].trim().trim_end_matches(':').trim();
-                if !after.is_empty() {
-                    ret = Some(map_type(after));
-                }
-            }
+        let (start_idx, end_idx) = function_bounds(&lines, line_idx);
+        let lambda = parse_lambda_node(&lines, &line_starts, line_idx, start_idx, end_idx);
+        ueg.diagnostics.extend(lambda.diagnostics.iter().cloned());
+        ueg.nodes.push(NodeKind::Lambda(lambda));
+    }
+
+    ueg
+}
+
+fn is_top_level_definition(line: &str) -> bool {
+    line.starts_with("def ")
+}
+
+fn function_bounds(lines: &[&str], line_idx: usize) -> (usize, usize) {
+    let mut start_idx = line_idx;
+    while start_idx > 0 {
+        let previous = lines[start_idx - 1].trim_start();
+        if previous.starts_with('@') || previous.starts_with('#') || previous.is_empty() {
+            start_idx -= 1;
+            continue;
         }
-        // collect trimmed body lines (for translation) from def line +1 until break
-        let mut j = line_idx + 1;
-        while j < lines.len() {
-            let raw = lines[j];
-            let t = raw.trim().to_string();
-            if t.is_empty() {
-                j += 1;
-                continue;
-            }
-            if t.starts_with("def ") {
-                break;
-            }
-            body_lines.push(t);
-            j += 1;
-        }
-        // Build a small AST fragment for emitters: JSON-like string with name, params, ret
-        let _frag = {
-            let mut parts: Vec<String> = Vec::new();
-            parts.push(format!("\"name\": \"{}\"", name));
-            let ps = params
-                .iter()
-                .map(|(n, t)| format!("{{\"n\":\"{}\",\"t\":\"{}\"}}", n, t))
-                .collect::<Vec<_>>()
-                .join(",");
-            parts.push(format!("\"params\": [{}]", ps));
-            if let Some(r) = &ret {
-                parts.push(format!("\"ret\": \"{}\"", r));
-            }
-            format!("{{{}}}", parts.join(","))
-        };
-        // attach frag after break
         break;
     }
 
-    if name.is_empty() {
-        return Ueg::new();
+    let mut end_idx = line_idx;
+    for idx in (line_idx + 1)..lines.len() {
+        if is_top_level_definition(lines[idx]) {
+            break;
+        }
+        if !lines[idx].trim().is_empty() {
+            end_idx = idx;
+        }
+    }
+    (start_idx, end_idx)
+}
+
+fn parse_lambda_node(
+    lines: &[&str],
+    line_starts: &[usize],
+    line_idx: usize,
+    start_idx: usize,
+    end_idx: usize,
+) -> LambdaNode {
+    let signature = lines[line_idx].trim_end_matches(':').trim();
+    let rest = signature.trim_start_matches("def").trim();
+    let name = rest.split('(').next().unwrap_or("").trim().to_string();
+    let mut params = Vec::new();
+    let mut ret = None;
+
+    if let Some(pstart) = rest.find('(') {
+        if let Some(pend) = rest[pstart + 1..].find(')') {
+            let pend = pstart + 1 + pend;
+            for parameter in split_top_level_commas(&rest[pstart + 1..pend]) {
+                let parameter = parameter.trim();
+                if parameter.is_empty() {
+                    continue;
+                }
+                if let Some(colon) = parameter.find(':') {
+                    let parameter_name = parameter[..colon].trim().to_string();
+                    let annotation = parameter[colon + 1..].trim();
+                    params.push((parameter_name, map_type(annotation)));
+                } else {
+                    params.push((parameter.to_string(), "_".into()));
+                }
+            }
+        }
+        if let Some(arrow) = rest.find("->") {
+            let annotation = rest[arrow + 2..].trim().trim_end_matches(':').trim();
+            if !annotation.is_empty() {
+                ret = Some(map_type(annotation));
+            }
+        }
     }
 
-    let mut ueg = Ueg::new();
-    let lambda = LambdaNode {
-        name: name.clone(),
-        params: params.clone(),
-        ret: ret.clone(),
+    let mut body_lines = Vec::new();
+    let mut body_indices = Vec::new();
+    for idx in (line_idx + 1)..=end_idx {
+        let trimmed = lines[idx].trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        body_indices.push(idx);
+        body_lines.push(trimmed.to_string());
+    }
+
+    let statements = typed_statements(lines, line_starts, &body_indices);
+    let diagnostics = diagnostics_for_statements(&statements);
+    let source_span = span_for_lines(lines, line_starts, start_idx, end_idx);
+    let ast_fragment = Some(ast_fragment(&name, &params, ret.as_deref()));
+
+    LambdaNode {
+        name,
+        params,
+        ret,
         body: translate_body_to_rust_like(&body_lines),
-        orig_body: orig_lines,
-        ast_fragment: Some({
-            // regenerate small fragment consistently
-            let mut parts: Vec<String> = Vec::new();
-            parts.push(format!("\"name\": \"{}\"", name));
-            let ps = params
-                .iter()
-                .map(|(n, t)| format!("{{\"n\":\"{}\",\"t\":\"{}\"}}", n, t))
-                .collect::<Vec<_>>()
-                .join(",");
-            parts.push(format!("\"params\": [{}]", ps));
-            if let Some(r) = &ret {
-                parts.push(format!("\"ret\": \"{}\"", r));
+        orig_body: lines[start_idx..=end_idx]
+            .iter()
+            .map(|line| (*line).to_string())
+            .collect(),
+        ast_fragment,
+        source_span,
+        statements,
+        diagnostics,
+    }
+}
+
+fn ast_fragment(name: &str, params: &[(String, String)], ret: Option<&str>) -> String {
+    let params = params
+        .iter()
+        .map(|(name, annotation)| format!("{{\"n\":\"{}\",\"t\":\"{}\"}}", name, annotation))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut parts = vec![
+        format!("\"name\": \"{}\"", name),
+        format!("\"params\": [{}]", params),
+    ];
+    if let Some(ret) = ret {
+        parts.push(format!("\"ret\": \"{}\"", ret));
+    }
+    format!("{{{}}}", parts.join(","))
+}
+
+fn typed_statements(
+    lines: &[&str],
+    line_starts: &[usize],
+    body_indices: &[usize],
+) -> Vec<TypedStatement> {
+    body_indices
+        .iter()
+        .map(|&line_idx| {
+            let raw = lines[line_idx];
+            let span = statement_span(raw, line_starts[line_idx], line_idx);
+            let kind = statement_kind(raw.trim());
+            TypedStatement { kind, span }
+        })
+        .collect()
+}
+
+fn statement_kind(source: &str) -> StatementKind {
+    if source.starts_with("if ") && source.ends_with(':') {
+        return StatementKind::If {
+            condition: source[3..source.len() - 1].trim().to_string(),
+        };
+    }
+    if let Some(expression) = source.strip_prefix("return ") {
+        return StatementKind::Return {
+            expression: expression.trim().to_string(),
+        };
+    }
+    if source.starts_with("print(") && source.ends_with(')') {
+        return StatementKind::Print {
+            expression: source[6..source.len() - 1].trim().to_string(),
+        };
+    }
+    if source.starts_with("for ") {
+        if let Some((target, expression)) = source[4..].split_once(" in ") {
+            let expression = expression.trim_end_matches(':').trim();
+            if expression.starts_with("range(") && expression.ends_with(')') {
+                let args = split_top_level_commas(&expression[6..expression.len() - 1]);
+                if args.len() == 1 {
+                    return StatementKind::RangeLoop {
+                        target: target.trim().to_string(),
+                        start: "0".into(),
+                        end: args[0].trim().to_string(),
+                        inclusive: false,
+                    };
+                }
+                if args.len() == 2 {
+                    return StatementKind::RangeLoop {
+                        target: target.trim().to_string(),
+                        start: args[0].trim().to_string(),
+                        end: args[1].trim().to_string(),
+                        inclusive: false,
+                    };
+                }
             }
-            format!("{{{}}}", parts.join(","))
-        }),
-    };
-    ueg.nodes.push(NodeKind::Lambda(lambda));
-    ueg
+        }
+    }
+    if !source.contains("==") && !source.contains(":") {
+        if let Some((left, right)) = source.split_once('=') {
+            let targets = split_top_level_commas(left);
+            let values = split_top_level_commas(right);
+            if targets.len() > 1 && targets.len() == values.len() {
+                return StatementKind::TupleAssign {
+                    targets: targets
+                        .into_iter()
+                        .map(|item| item.trim().to_string())
+                        .collect(),
+                    values: values
+                        .into_iter()
+                        .map(|item| item.trim().to_string())
+                        .collect(),
+                };
+            }
+        }
+    }
+    StatementKind::Unsupported {
+        source: source.to_string(),
+    }
+}
+
+fn diagnostics_for_statements(statements: &[TypedStatement]) -> Vec<UegDiagnostic> {
+    statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Unsupported { source } => Some(UegDiagnostic {
+                code: "UEG-UNSUPPORTED-STATEMENT".into(),
+                message: format!("unsupported statement is not lowered: {source}"),
+                severity: DiagnosticSeverity::Error,
+                span: statement.span.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn line_starts(source: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (idx, byte) in source.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(idx + 1);
+        }
+    }
+    starts
+}
+
+fn span_for_lines(
+    lines: &[&str],
+    line_starts: &[usize],
+    start_idx: usize,
+    end_idx: usize,
+) -> SourceSpan {
+    SourceSpan {
+        start_byte: line_starts[start_idx],
+        end_byte: line_starts[end_idx] + lines[end_idx].len(),
+        start_line: start_idx + 1,
+        start_column: 0,
+        end_line: end_idx + 1,
+        end_column: lines[end_idx].chars().count(),
+    }
+}
+
+fn statement_span(raw: &str, line_start: usize, line_idx: usize) -> SourceSpan {
+    let leading_bytes = raw.len() - raw.trim_start().len();
+    SourceSpan {
+        start_byte: line_start + leading_bytes,
+        end_byte: line_start + raw.len(),
+        start_line: line_idx + 1,
+        start_column: raw[..leading_bytes].chars().count(),
+        end_line: line_idx + 1,
+        end_column: raw.chars().count(),
+    }
+}
+
+fn split_top_level_commas(source: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (idx, character) in source.char_indices() {
+        match character {
+            '<' | '[' | '(' => depth += 1,
+            '>' | ']' | ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(source[start..idx].trim().to_string());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < source.len() {
+        items.push(source[start..].trim().to_string());
+    }
+    items
 }
 
 /// Compute a minimal baseline by scanning `examples/*.py` and returning the
