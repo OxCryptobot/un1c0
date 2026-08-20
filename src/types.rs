@@ -30,6 +30,9 @@ fn parse_type(s: &str) -> String {
             .map(|it| parse_type(&it))
             .collect::<Vec<_>>()
             .join(", ");
+        if base.trim().is_empty() && s.starts_with('(') && s.ends_with(')') {
+            return format!("({})", inner_parsed);
+        }
         return format!("{}<{}>", base.trim(), inner_parsed);
     }
     // primitives normalization

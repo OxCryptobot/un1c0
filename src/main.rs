@@ -5,6 +5,7 @@ use tree_sitter::Parser as TsParser;
 extern crate tree_sitter_python;
 extern crate tree_sitter_go;
 mod walker;
+mod types;
 mod walker_go;
 mod walker_move;
 mod walker_ts;

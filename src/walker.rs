@@ -149,14 +149,11 @@ pub fn python_to_ueg(_root: &Node, source: &[u8]) -> Ueg {
         // record exact original lines from start_idx until next top-level def or EOF
         let mut idx = start_idx;
         while idx < lines.len() {
-            let raw = lines[idx].to_string();
-            orig_lines.push(raw);
-            if idx > line_idx {
-                let t = lines[idx].trim_start();
-                if t.starts_with("def ") {
-                    break;
-                }
+            let t = lines[idx].trim_start();
+            if idx > line_idx && t.starts_with("def ") {
+                break;
             }
+            orig_lines.push(lines[idx].to_string());
             idx += 1;
         }
 
@@ -218,6 +215,10 @@ pub fn python_to_ueg(_root: &Node, source: &[u8]) -> Ueg {
         };
         // attach frag after break
         break;
+    }
+
+    if name.is_empty() {
+        return Ueg::new();
     }
 
     let mut ueg = Ueg::new();
@@ -362,14 +363,6 @@ fn translate_body_to_rust_like(body: &[String]) -> Vec<String> {
 }
 
 fn map_type(ann: &str) -> String {
-    // Simple type mapping without external dependencies
-    let norm = ann.trim();
-    // if it's a primitive normalized, keep Rust mapping
-    match norm {
-        "int" | "i32" => "i32".to_string(),
-        "float" | "f64" => "f64".to_string(),
-        "str" | "String" => "String".to_string(),
-        "bool" => "bool".to_string(),
-        other => other.to_string(),
-    }
+    // Keep parser metadata on the same canonical annotation contract as targets.
+    crate::types::normalize_annotation(ann)
 }
