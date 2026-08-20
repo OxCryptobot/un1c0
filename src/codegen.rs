@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use crate::lock_free_buffer_pool::{LockFreeBufferPool, PooledBuffer};
 use crate::semantic::{validate_ueg_for_target, SemanticValidationReport};
+use crate::semantic_cache::SemanticValidationCache;
 use crate::targets::{lower_to_go, lower_to_zig};
 use crate::ueg_python::lower_to_python;
 use crate::walker::{
@@ -124,6 +125,7 @@ impl std::error::Error for GenerationError {}
 pub struct IncrementalCodeGenerator {
     target: TargetBinding,
     next_node_index: usize,
+    semantic_cache: Option<SemanticValidationCache>,
 }
 
 impl IncrementalCodeGenerator {
@@ -131,6 +133,15 @@ impl IncrementalCodeGenerator {
         Self {
             target,
             next_node_index: 0,
+            semantic_cache: None,
+        }
+    }
+
+    pub fn with_semantic_cache(target: TargetBinding, cache: SemanticValidationCache) -> Self {
+        Self {
+            target,
+            next_node_index: 0,
+            semantic_cache: Some(cache),
         }
     }
 
@@ -143,7 +154,14 @@ impl IncrementalCodeGenerator {
     }
 
     pub fn next_chunk(&mut self, ueg: &Ueg) -> Result<Option<GeneratedChunk>, GenerationError> {
-        validate_generation_input(ueg, self.target)?;
+        validate_generation_input(ueg, self.target, self.semantic_cache.as_ref())?;
+        self.next_chunk_unchecked(ueg)
+    }
+
+    fn next_chunk_unchecked(
+        &mut self,
+        ueg: &Ueg,
+    ) -> Result<Option<GeneratedChunk>, GenerationError> {
         if self.next_node_index > ueg.nodes.len() {
             return Err(GenerationError::CursorRewind {
                 cursor: self.next_node_index,
@@ -175,13 +193,13 @@ impl IncrementalCodeGenerator {
         F: FnMut(GeneratedChunk) -> Result<(), E>,
         E: Display,
     {
-        validate_generation_input(ueg, self.target)?;
+        validate_generation_input(ueg, self.target, self.semantic_cache.as_ref())?;
         let mut stats = GenerationStats {
             target: self.target,
             chunks_emitted: 0,
             bytes_emitted: 0,
         };
-        while let Some(chunk) = self.next_chunk(ueg)? {
+        while let Some(chunk) = self.next_chunk_unchecked(ueg)? {
             let bytes = chunk.code.len();
             sink(chunk).map_err(|error| GenerationError::Sink {
                 message: error.to_string(),
@@ -234,7 +252,11 @@ pub fn generate_incrementally(
     IncrementalCodeGenerator::new(target).emit_to_string(ueg)
 }
 
-fn validate_generation_input(ueg: &Ueg, target: TargetBinding) -> Result<(), GenerationError> {
+fn validate_generation_input(
+    ueg: &Ueg,
+    target: TargetBinding,
+    semantic_cache: Option<&SemanticValidationCache>,
+) -> Result<(), GenerationError> {
     if !ueg.validate() {
         let diagnostic_count = ueg
             .diagnostics
@@ -248,7 +270,10 @@ fn validate_generation_input(ueg: &Ueg, target: TargetBinding) -> Result<(), Gen
             .count();
         return Err(GenerationError::InvalidUeg { diagnostic_count });
     }
-    let report = validate_ueg_for_target(ueg, target);
+    let report = match semantic_cache {
+        Some(cache) => cache.validate_for_target(ueg, target),
+        None => validate_ueg_for_target(ueg, target),
+    };
     if !report.is_valid() {
         return Err(GenerationError::SemanticValidation { report });
     }
