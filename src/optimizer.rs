@@ -202,18 +202,22 @@ fn referenced_names(lambda: &crate::walker::LambdaNode) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for statement in &lambda.statements {
         match &statement.kind {
-            StatementKind::If { condition } => names.extend(identifier_tokens(condition)),
-            StatementKind::Return { expression } => names.extend(identifier_tokens(expression)),
+            StatementKind::If { condition } => names.extend(identifier_tokens(&condition.source)),
+            StatementKind::Return { expression } => {
+                names.extend(identifier_tokens(&expression.source))
+            }
             StatementKind::TupleAssign { values, .. } => {
                 for value in values {
-                    names.extend(identifier_tokens(value));
+                    names.extend(identifier_tokens(&value.source));
                 }
             }
             StatementKind::RangeLoop { start, end, .. } => {
-                names.extend(identifier_tokens(start));
-                names.extend(identifier_tokens(end));
+                names.extend(identifier_tokens(&start.source));
+                names.extend(identifier_tokens(&end.source));
             }
-            StatementKind::Print { expression } => names.extend(identifier_tokens(expression)),
+            StatementKind::Print { expression } => {
+                names.extend(identifier_tokens(&expression.source))
+            }
             StatementKind::Unsupported { source } => names.extend(identifier_tokens(source)),
         }
     }

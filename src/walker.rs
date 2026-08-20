@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use tree_sitter::Node;
 
 // Clean single-file implementation: UEG types, entropy gate, python->UEG->Rust
@@ -15,7 +16,7 @@ pub enum NodeKind {
     Lambda(LambdaNode),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SourceSpan {
     pub start_byte: usize,
     pub end_byte: usize,
@@ -26,13 +27,13 @@ pub struct SourceSpan {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiagnosticSeverity {
     Warning,
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UegDiagnostic {
     pub code: String,
     pub message: String,
@@ -40,36 +41,132 @@ pub struct UegDiagnostic {
     pub span: SourceSpan,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatementKind {
-    If {
-        condition: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnaryOperator {
+    Not,
+    Negate,
+    Positive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExpressionKind {
+    Identifier {
+        name: String,
     },
-    Return {
-        expression: String,
+    Integer {
+        value: i64,
     },
-    TupleAssign {
-        targets: Vec<String>,
-        values: Vec<String>,
+    Float {
+        value: String,
     },
-    RangeLoop {
-        target: String,
-        start: String,
-        end: String,
-        inclusive: bool,
+    String {
+        value: String,
     },
-    Print {
-        expression: String,
+    Boolean {
+        value: bool,
+    },
+    Unary {
+        operator: UnaryOperator,
+        operand: Box<TypedExpression>,
+    },
+    Binary {
+        operator: BinaryOperator,
+        left: Box<TypedExpression>,
+        right: Box<TypedExpression>,
+    },
+    Call {
+        function: Box<TypedExpression>,
+        arguments: Vec<TypedExpression>,
+    },
+    Tuple {
+        items: Vec<TypedExpression>,
     },
     Unsupported {
         source: String,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypedExpression {
+    pub kind: ExpressionKind,
+    pub source: String,
+    pub span: SourceSpan,
+}
+
+impl PartialEq<str> for TypedExpression {
+    fn eq(&self, other: &str) -> bool {
+        self.source == other
+    }
+}
+
+impl PartialEq<&str> for TypedExpression {
+    fn eq(&self, other: &&str) -> bool {
+        self.source == *other
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatementKind {
+    If {
+        condition: TypedExpression,
+    },
+    Return {
+        expression: TypedExpression,
+    },
+    TupleAssign {
+        targets: Vec<TypedExpression>,
+        values: Vec<TypedExpression>,
+    },
+    RangeLoop {
+        target: TypedExpression,
+        start: TypedExpression,
+        end: TypedExpression,
+        inclusive: bool,
+    },
+    Print {
+        expression: TypedExpression,
+    },
+    Unsupported {
+        source: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypedStatement {
     pub kind: StatementKind,
     pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypedParameter {
+    pub name: String,
+    pub annotation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AstFragment {
+    pub name: String,
+    pub params: Vec<TypedParameter>,
+    pub ret: Option<String>,
+    pub statements: Vec<TypedStatement>,
+    pub source_span: SourceSpan,
 }
 
 #[allow(dead_code)]
@@ -81,8 +178,8 @@ pub struct LambdaNode {
     pub body: Vec<String>,
     // preserve original Python body lines for exact roundtrips
     pub orig_body: Vec<String>,
-    // small structured AST fragment (JSON-like string) to aid emitters
-    pub ast_fragment: Option<String>,
+    // typed, serializable AST fragment shared by target emitters
+    pub ast_fragment: AstFragment,
     pub source_span: SourceSpan,
     pub statements: Vec<TypedStatement>,
     pub diagnostics: Vec<UegDiagnostic>,
@@ -285,7 +382,19 @@ fn parse_lambda_node(
     let statements = typed_statements(lines, line_starts, &body_indices);
     let diagnostics = diagnostics_for_statements(&statements);
     let source_span = span_for_lines(lines, line_starts, start_idx, end_idx);
-    let ast_fragment = Some(ast_fragment(&name, &params, ret.as_deref()));
+    let ast_fragment = AstFragment {
+        name: name.clone(),
+        params: params
+            .iter()
+            .map(|(name, annotation)| TypedParameter {
+                name: name.clone(),
+                annotation: annotation.clone(),
+            })
+            .collect(),
+        ret: ret.clone(),
+        statements: statements.clone(),
+        source_span: source_span.clone(),
+    };
 
     LambdaNode {
         name,
@@ -303,22 +412,6 @@ fn parse_lambda_node(
     }
 }
 
-fn ast_fragment(name: &str, params: &[(String, String)], ret: Option<&str>) -> String {
-    let params = params
-        .iter()
-        .map(|(name, annotation)| format!("{{\"n\":\"{}\",\"t\":\"{}\"}}", name, annotation))
-        .collect::<Vec<_>>()
-        .join(",");
-    let mut parts = vec![
-        format!("\"name\": \"{}\"", name),
-        format!("\"params\": [{}]", params),
-    ];
-    if let Some(ret) = ret {
-        parts.push(format!("\"ret\": \"{}\"", ret));
-    }
-    format!("{{{}}}", parts.join(","))
-}
-
 fn typed_statements(
     lines: &[&str],
     line_starts: &[usize],
@@ -328,47 +421,115 @@ fn typed_statements(
         .iter()
         .map(|&line_idx| {
             let raw = lines[line_idx];
+            let trimmed = raw.trim();
             let span = statement_span(raw, line_starts[line_idx], line_idx);
-            let kind = statement_kind(raw.trim());
+            let kind = statement_kind(trimmed, raw, line_idx, line_starts[line_idx]);
             TypedStatement { kind, span }
         })
         .collect()
 }
 
-fn statement_kind(source: &str) -> StatementKind {
+fn statement_kind(
+    source: &str,
+    raw_line: &str,
+    line_idx: usize,
+    line_start: usize,
+) -> StatementKind {
+    let indent = raw_line.len() - raw_line.trim_start().len();
     if source.starts_with("if ") && source.ends_with(':') {
+        let expression = source[3..source.len() - 1].trim();
         return StatementKind::If {
-            condition: source[3..source.len() - 1].trim().to_string(),
+            condition: expression_from_trimmed(
+                expression,
+                raw_line,
+                line_idx,
+                line_start,
+                indent + 3,
+            ),
         };
     }
-    if let Some(expression) = source.strip_prefix("return ") {
+    if source.starts_with("return ") {
+        let expression = source[7..].trim();
         return StatementKind::Return {
-            expression: expression.trim().to_string(),
+            expression: expression_from_trimmed(
+                expression,
+                raw_line,
+                line_idx,
+                line_start,
+                indent + 7,
+            ),
         };
     }
     if source.starts_with("print(") && source.ends_with(')') {
+        let expression = source[6..source.len() - 1].trim();
         return StatementKind::Print {
-            expression: source[6..source.len() - 1].trim().to_string(),
+            expression: expression_from_trimmed(
+                expression,
+                raw_line,
+                line_idx,
+                line_start,
+                indent + 6,
+            ),
         };
     }
     if source.starts_with("for ") {
         if let Some((target, expression)) = source[4..].split_once(" in ") {
+            let target = target.trim();
             let expression = expression.trim_end_matches(':').trim();
+            let target_offset = indent + 4 + source[4..].find(target).unwrap_or(0);
             if expression.starts_with("range(") && expression.ends_with(')') {
-                let args = split_top_level_commas(&expression[6..expression.len() - 1]);
+                let range_args = &expression[6..expression.len() - 1];
+                let range_offset = indent + source.find("range(").unwrap_or(0) + 6;
+                let args = split_top_level_commas_with_offsets(range_args);
                 if args.len() == 1 {
                     return StatementKind::RangeLoop {
-                        target: target.trim().to_string(),
-                        start: "0".into(),
-                        end: args[0].trim().to_string(),
+                        target: expression_from_trimmed(
+                            target,
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            target_offset,
+                        ),
+                        start: expression_from_trimmed(
+                            "0",
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            range_offset,
+                        ),
+                        end: expression_from_trimmed(
+                            &args[0].0,
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            range_offset + args[0].1,
+                        ),
                         inclusive: false,
                     };
                 }
                 if args.len() == 2 {
                     return StatementKind::RangeLoop {
-                        target: target.trim().to_string(),
-                        start: args[0].trim().to_string(),
-                        end: args[1].trim().to_string(),
+                        target: expression_from_trimmed(
+                            target,
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            target_offset,
+                        ),
+                        start: expression_from_trimmed(
+                            &args[0].0,
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            range_offset + args[0].1,
+                        ),
+                        end: expression_from_trimmed(
+                            &args[1].0,
+                            raw_line,
+                            line_idx,
+                            line_start,
+                            range_offset + args[1].1,
+                        ),
                         inclusive: false,
                     };
                 }
@@ -377,17 +538,35 @@ fn statement_kind(source: &str) -> StatementKind {
     }
     if !source.contains("==") && !source.contains(":") {
         if let Some((left, right)) = source.split_once('=') {
-            let targets = split_top_level_commas(left);
-            let values = split_top_level_commas(right);
+            let targets = split_top_level_commas_with_offsets(left);
+            let values = split_top_level_commas_with_offsets(right);
             if targets.len() > 1 && targets.len() == values.len() {
+                let left_offset = indent;
+                let right_offset = indent + source.find('=').unwrap_or(0) + 1;
                 return StatementKind::TupleAssign {
                     targets: targets
-                        .into_iter()
-                        .map(|item| item.trim().to_string())
+                        .iter()
+                        .map(|(item, offset)| {
+                            expression_from_trimmed(
+                                item,
+                                raw_line,
+                                line_idx,
+                                line_start,
+                                left_offset + *offset,
+                            )
+                        })
                         .collect(),
                     values: values
-                        .into_iter()
-                        .map(|item| item.trim().to_string())
+                        .iter()
+                        .map(|(item, offset)| {
+                            expression_from_trimmed(
+                                item,
+                                raw_line,
+                                line_idx,
+                                line_start,
+                                right_offset + *offset,
+                            )
+                        })
                         .collect(),
                 };
             }
@@ -398,19 +577,368 @@ fn statement_kind(source: &str) -> StatementKind {
     }
 }
 
+fn expression_from_trimmed(
+    expression: &str,
+    raw_line: &str,
+    line_idx: usize,
+    line_start: usize,
+    base_offset: usize,
+) -> TypedExpression {
+    let leading = expression.len() - expression.trim_start().len();
+    let offset = base_offset + leading;
+    let source = expression.trim();
+    expression_node(source, raw_line, line_idx, line_start, offset)
+}
+
+fn expression_node(
+    source: &str,
+    raw_line: &str,
+    line_idx: usize,
+    line_start: usize,
+    offset: usize,
+) -> TypedExpression {
+    let absolute_start = line_start + offset;
+    let span = SourceSpan {
+        start_byte: absolute_start,
+        end_byte: absolute_start + source.len(),
+        start_line: line_idx + 1,
+        start_column: raw_line[..offset].chars().count(),
+        end_line: line_idx + 1,
+        end_column: raw_line[..offset].chars().count() + source.chars().count(),
+    };
+    let kind = expression_kind(source, raw_line, line_idx, line_start, offset);
+    TypedExpression {
+        kind,
+        source: source.to_string(),
+        span,
+    }
+}
+
+fn expression_kind(
+    source: &str,
+    raw_line: &str,
+    line_idx: usize,
+    line_start: usize,
+    offset: usize,
+) -> ExpressionKind {
+    if source.is_empty() {
+        return ExpressionKind::Unsupported {
+            source: String::new(),
+        };
+    }
+    if source == "True" {
+        return ExpressionKind::Boolean { value: true };
+    }
+    if source == "False" {
+        return ExpressionKind::Boolean { value: false };
+    }
+    if let Ok(value) = source.parse::<i64>() {
+        return ExpressionKind::Integer { value };
+    }
+    if source.parse::<f64>().is_ok() && source.contains('.') {
+        return ExpressionKind::Float {
+            value: source.to_string(),
+        };
+    }
+    if source.len() >= 2
+        && ((source.starts_with('"') && source.ends_with('"'))
+            || (source.starts_with('\'') && source.ends_with('\'')))
+    {
+        return ExpressionKind::String {
+            value: source[1..source.len() - 1].to_string(),
+        };
+    }
+    if let Some(rest) = source.strip_prefix("not ") {
+        let child_offset = offset + source.len() - rest.len();
+        return ExpressionKind::Unary {
+            operator: UnaryOperator::Not,
+            operand: Box::new(expression_node(
+                rest.trim(),
+                raw_line,
+                line_idx,
+                line_start,
+                child_offset + rest.len() - rest.trim_start().len(),
+            )),
+        };
+    }
+    if let Some(rest) = source.strip_prefix('-') {
+        return ExpressionKind::Unary {
+            operator: UnaryOperator::Negate,
+            operand: Box::new(expression_node(
+                rest.trim(),
+                raw_line,
+                line_idx,
+                line_start,
+                offset + 1 + rest.len() - rest.trim_start().len(),
+            )),
+        };
+    }
+    if let Some(rest) = source.strip_prefix('+') {
+        return ExpressionKind::Unary {
+            operator: UnaryOperator::Positive,
+            operand: Box::new(expression_node(
+                rest.trim(),
+                raw_line,
+                line_idx,
+                line_start,
+                offset + 1 + rest.len() - rest.trim_start().len(),
+            )),
+        };
+    }
+    if let Some((operator_offset, operator_length, operator)) =
+        find_top_level_binary_operator(source)
+    {
+        let left = source[..operator_offset].trim();
+        let right = source[operator_offset + operator_length..].trim();
+        let left_offset = offset + source[..operator_offset].len() - left.len();
+        let right_offset = offset
+            + operator_offset
+            + operator_length
+            + source[operator_offset + operator_length..].len()
+            - right.len();
+        return ExpressionKind::Binary {
+            operator,
+            left: Box::new(expression_node(
+                left,
+                raw_line,
+                line_idx,
+                line_start,
+                left_offset,
+            )),
+            right: Box::new(expression_node(
+                right,
+                raw_line,
+                line_idx,
+                line_start,
+                right_offset,
+            )),
+        };
+    }
+    if let Some(open) = top_level_call_open(source) {
+        let function_source = source[..open].trim();
+        let function_offset = offset + source[..open].len() - function_source.len();
+        let args_source = &source[open + 1..source.len() - 1];
+        let arguments = split_top_level_commas_with_offsets(args_source)
+            .into_iter()
+            .map(|(argument, argument_offset)| {
+                let trimmed_offset = argument_offset + argument.len() - argument.trim_start().len();
+                expression_node(
+                    argument.trim(),
+                    raw_line,
+                    line_idx,
+                    line_start,
+                    offset + open + 1 + trimmed_offset,
+                )
+            })
+            .collect();
+        return ExpressionKind::Call {
+            function: Box::new(expression_node(
+                function_source,
+                raw_line,
+                line_idx,
+                line_start,
+                function_offset,
+            )),
+            arguments,
+        };
+    }
+    let tuple_items = split_top_level_commas_with_offsets(source);
+    if tuple_items.len() > 1 {
+        return ExpressionKind::Tuple {
+            items: tuple_items
+                .into_iter()
+                .map(|(item, item_offset)| {
+                    let trimmed_offset = item_offset + item.len() - item.trim_start().len();
+                    expression_node(
+                        item.trim(),
+                        raw_line,
+                        line_idx,
+                        line_start,
+                        offset + trimmed_offset,
+                    )
+                })
+                .collect(),
+        };
+    }
+    if is_identifier_expression(source) {
+        return ExpressionKind::Identifier {
+            name: source.to_string(),
+        };
+    }
+    ExpressionKind::Unsupported {
+        source: source.to_string(),
+    }
+}
+
+fn find_top_level_binary_operator(source: &str) -> Option<(usize, usize, BinaryOperator)> {
+    const PRECEDENCE: &[&[&str]] = &[
+        &[" or "],
+        &[" and "],
+        &["==", "!=", "<=", ">=", "<", ">"],
+        &["+", "-"],
+        &["*", "/", "%"],
+    ];
+    for operators in PRECEDENCE {
+        let mut found = None;
+        for index in 0..source.len() {
+            if !source.is_char_boundary(index) || !is_top_level_at(source, index) {
+                continue;
+            }
+            for operator in *operators {
+                if source[index..].starts_with(operator)
+                    && !((operator == &"-" || operator == &"+") && index == 0)
+                {
+                    found = Some((index, operator.len(), binary_operator(operator)));
+                    break;
+                }
+            }
+        }
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+fn binary_operator(operator: &str) -> BinaryOperator {
+    match operator.trim() {
+        "or" => BinaryOperator::Or,
+        "and" => BinaryOperator::And,
+        "==" => BinaryOperator::Equal,
+        "!=" => BinaryOperator::NotEqual,
+        "<" => BinaryOperator::Less,
+        "<=" => BinaryOperator::LessEqual,
+        ">" => BinaryOperator::Greater,
+        ">=" => BinaryOperator::GreaterEqual,
+        "+" => BinaryOperator::Add,
+        "-" => BinaryOperator::Subtract,
+        "*" => BinaryOperator::Multiply,
+        "/" => BinaryOperator::Divide,
+        "%" => BinaryOperator::Modulo,
+        _ => unreachable!("operator was validated by the parser"),
+    }
+}
+
+fn is_top_level_at(source: &str, target: usize) -> bool {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for (index, character) in source.char_indices() {
+        if index >= target {
+            return depth == 0 && quote.is_none();
+        }
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth == 0 && quote.is_none()
+}
+
+fn top_level_call_open(source: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, character) in source.char_indices() {
+        match character {
+            '(' if depth == 0 => return (index > 0 && source.ends_with(')')).then_some(index),
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_identifier_expression(source: &str) -> bool {
+    !source.is_empty()
+        && source
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '.'))
+        && source
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_alphabetic() || character == '_')
+}
+
 fn diagnostics_for_statements(statements: &[TypedStatement]) -> Vec<UegDiagnostic> {
-    statements
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StatementKind::Unsupported { source } => Some(UegDiagnostic {
+    let mut diagnostics = Vec::new();
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::Unsupported { source } => diagnostics.push(UegDiagnostic {
                 code: "UEG-UNSUPPORTED-STATEMENT".into(),
                 message: format!("unsupported statement is not lowered: {source}"),
                 severity: DiagnosticSeverity::Error,
                 span: statement.span.clone(),
             }),
-            _ => None,
-        })
-        .collect()
+            StatementKind::If { condition }
+            | StatementKind::Return {
+                expression: condition,
+            }
+            | StatementKind::Print {
+                expression: condition,
+            } => {
+                collect_expression_diagnostics(condition, &mut diagnostics);
+            }
+            StatementKind::TupleAssign { targets, values } => {
+                for expression in targets.iter().chain(values) {
+                    collect_expression_diagnostics(expression, &mut diagnostics);
+                }
+            }
+            StatementKind::RangeLoop {
+                target, start, end, ..
+            } => {
+                for expression in [target, start, end] {
+                    collect_expression_diagnostics(expression, &mut diagnostics);
+                }
+            }
+        }
+    }
+    diagnostics
+}
+
+fn collect_expression_diagnostics(
+    expression: &TypedExpression,
+    diagnostics: &mut Vec<UegDiagnostic>,
+) {
+    if let ExpressionKind::Unsupported { source } = &expression.kind {
+        diagnostics.push(UegDiagnostic {
+            code: "UEG-UNSUPPORTED-EXPRESSION".into(),
+            message: format!("unsupported expression is not lowered: {source}"),
+            severity: DiagnosticSeverity::Error,
+            span: expression.span.clone(),
+        });
+        return;
+    }
+    match &expression.kind {
+        ExpressionKind::Unary { operand, .. } => {
+            collect_expression_diagnostics(operand, diagnostics)
+        }
+        ExpressionKind::Binary { left, right, .. } => {
+            collect_expression_diagnostics(left, diagnostics);
+            collect_expression_diagnostics(right, diagnostics);
+        }
+        ExpressionKind::Call {
+            function,
+            arguments,
+        } => {
+            collect_expression_diagnostics(function, diagnostics);
+            for argument in arguments {
+                collect_expression_diagnostics(argument, diagnostics);
+            }
+        }
+        ExpressionKind::Tuple { items } => {
+            for item in items {
+                collect_expression_diagnostics(item, diagnostics);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn line_starts(source: &str) -> Vec<usize> {
@@ -452,24 +980,46 @@ fn statement_span(raw: &str, line_start: usize, line_idx: usize) -> SourceSpan {
 }
 
 fn split_top_level_commas(source: &str) -> Vec<String> {
+    split_top_level_commas_with_offsets(source)
+        .into_iter()
+        .map(|(item, _)| item)
+        .collect()
+}
+
+fn split_top_level_commas_with_offsets(source: &str) -> Vec<(String, usize)> {
     let mut items = Vec::new();
     let mut depth = 0usize;
+    let mut quote = None;
     let mut start = 0usize;
     for (idx, character) in source.char_indices() {
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                quote = None;
+            }
+            continue;
+        }
         match character {
-            '<' | '[' | '(' => depth += 1,
-            '>' | ']' | ')' => depth = depth.saturating_sub(1),
+            '\'' | '"' => quote = Some(character),
+            '<' | '[' | '(' | '{' => depth += 1,
+            '>' | ']' | ')' | '}' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
-                items.push(source[start..idx].trim().to_string());
+                push_comma_item(source, start, idx, &mut items);
                 start = idx + 1;
             }
             _ => {}
         }
     }
-    if start < source.len() {
-        items.push(source[start..].trim().to_string());
-    }
+    push_comma_item(source, start, source.len(), &mut items);
     items
+}
+
+fn push_comma_item(source: &str, start: usize, end: usize, items: &mut Vec<(String, usize)>) {
+    let raw = &source[start..end];
+    let leading = raw.len() - raw.trim_start().len();
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+        items.push((trimmed.to_string(), start + leading));
+    }
 }
 
 /// Compute a minimal baseline by scanning `examples/*.py` and returning the

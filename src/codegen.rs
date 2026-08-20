@@ -3,7 +3,10 @@ use std::fmt::{Display, Formatter};
 use crate::lock_free_buffer_pool::{LockFreeBufferPool, PooledBuffer};
 use crate::targets::{lower_to_go, lower_to_zig};
 use crate::ueg_python::lower_to_python;
-use crate::walker::{lower_to_rust, NodeKind, Ueg};
+use crate::walker::{
+    lower_to_rust, AstFragment, ExpressionKind, NodeKind, SourceSpan, StatementKind,
+    TypedExpression, Ueg,
+};
 
 const GO_PREAMBLE: &str = "package main\n\nimport \"fmt\"\n\n";
 const ZIG_PREAMBLE: &str = "const std = @import(\"std\");\n\n";
@@ -51,11 +54,20 @@ impl TargetBinding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitterHints {
+    pub source_span: SourceSpan,
+    pub expression_nodes: usize,
+    pub call_sites: usize,
+    pub control_flow_sites: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedChunk {
     pub target: TargetBinding,
     pub node_index: usize,
     pub function_name: String,
     pub code: String,
+    pub hints: EmitterHints,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +154,7 @@ impl IncrementalCodeGenerator {
             node_index,
             function_name,
             code,
+            hints: node_emitter_hints(node),
         }))
     }
 
@@ -228,6 +241,73 @@ fn validate_generation_input(ueg: &Ueg) -> Result<(), GenerationError> {
         })
         .count();
     Err(GenerationError::InvalidUeg { diagnostic_count })
+}
+
+fn node_emitter_hints(node: &NodeKind) -> EmitterHints {
+    let NodeKind::Lambda(lambda) = node;
+    ast_emitter_hints(&lambda.ast_fragment)
+}
+
+fn ast_emitter_hints(ast: &AstFragment) -> EmitterHints {
+    let mut hints = EmitterHints {
+        source_span: ast.source_span.clone(),
+        expression_nodes: 0,
+        call_sites: 0,
+        control_flow_sites: 0,
+    };
+    for statement in &ast.statements {
+        match &statement.kind {
+            StatementKind::If { condition } => {
+                hints.control_flow_sites += 1;
+                count_expression_hints(condition, &mut hints);
+            }
+            StatementKind::RangeLoop {
+                target, start, end, ..
+            } => {
+                hints.control_flow_sites += 1;
+                for expression in [target, start, end] {
+                    count_expression_hints(expression, &mut hints);
+                }
+            }
+            StatementKind::Return { expression } | StatementKind::Print { expression } => {
+                count_expression_hints(expression, &mut hints);
+            }
+            StatementKind::TupleAssign { targets, values } => {
+                for expression in targets.iter().chain(values) {
+                    count_expression_hints(expression, &mut hints);
+                }
+            }
+            StatementKind::Unsupported { .. } => {}
+        }
+    }
+    hints
+}
+
+fn count_expression_hints(expression: &TypedExpression, hints: &mut EmitterHints) {
+    hints.expression_nodes += 1;
+    match &expression.kind {
+        ExpressionKind::Call {
+            function,
+            arguments,
+        } => {
+            hints.call_sites += 1;
+            count_expression_hints(function, hints);
+            for argument in arguments {
+                count_expression_hints(argument, hints);
+            }
+        }
+        ExpressionKind::Unary { operand, .. } => count_expression_hints(operand, hints),
+        ExpressionKind::Binary { left, right, .. } => {
+            count_expression_hints(left, hints);
+            count_expression_hints(right, hints);
+        }
+        ExpressionKind::Tuple { items } => {
+            for item in items {
+                count_expression_hints(item, hints);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn node_name(node: &NodeKind) -> &str {

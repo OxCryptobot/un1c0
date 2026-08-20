@@ -111,9 +111,12 @@ fn parser_captures_typed_signature_metadata_and_lowered_body() {
         .body
         .iter()
         .any(|line| line == "println!(\"{}\", values);"));
-    let fragment = lambda.ast_fragment.as_deref().expect("AST fragment");
-    assert!(fragment.contains("\"name\": \"first\""));
-    assert!(fragment.contains("\"ret\": \"Optional<i32>\""));
+    assert_eq!(lambda.ast_fragment.name, "first");
+    assert_eq!(lambda.ast_fragment.params[0].name, "x");
+    assert_eq!(lambda.ast_fragment.ret.as_deref(), Some("Optional<i32>"));
+    let serialized = serde_json::to_string(&lambda.ast_fragment).expect("serializable AST");
+    assert!(serialized.contains("\"name\":\"first\""));
+    assert!(serialized.contains("\"ret\":\"Optional<i32>\""));
 }
 
 #[test]
