@@ -28,5 +28,5 @@ grep -q 'ownership_bound_cas_permit_required' scripts/collect_security_complianc
 grep -q 'cas_request_epoch_exactly_bound' scripts/collect_security_compliance_metrics.py
 grep -q 'idempotent_retry_preserves_ownership' scripts/collect_security_compliance_metrics.py
 grep -q 'phase43_ownership_bound_cas' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 185' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 193' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 43 ownership-bound CAS validation passed.'

@@ -3,8 +3,9 @@ use crate::cross_process_ownership::{
     OwnershipWritePermit,
 };
 use crate::replicated_durability::{
-    CasCommitOutcome, CasDurabilitySnapshotStore, CasState, CasWriteRequest,
-    ReplicaDurabilityAcknowledgement, ReplicatedDurabilityError, SingleWriterCasStore,
+    CasCommitOutcome, CasDurabilitySnapshotStore, CasPreAdmissionContext, CasState,
+    CasWriteRequest, ReplicaDurabilityAcknowledgement, ReplicatedDurabilityError,
+    SingleWriterCasStore,
 };
 use ed25519_dalek::VerifyingKey;
 use std::path::PathBuf;
@@ -104,6 +105,10 @@ impl OwnershipBoundCasCoordinator {
 
     pub fn cas_state(&self) -> &CasState {
         self.cas.state()
+    }
+
+    pub fn pre_admission_context(&self) -> CasPreAdmissionContext {
+        self.cas.pre_admission_context()
     }
 
     pub fn admit_write(

@@ -26,5 +26,5 @@ grep -q '"secret_material_recorded": false' "$TMP_DIR/benchmark.json"
 grep -q 'fencing_authority_heartbeat_signature_required' scripts/collect_security_compliance_metrics.py
 grep -q 'fence_consumer_ack_exact_binding' scripts/collect_security_compliance_metrics.py
 grep -q 'phase38_external_fencing_supervision' scripts/audit_security_compliance_metrics.py
-grep -q 'EXPECTED_GATE_COUNT = 185' scripts/audit_security_compliance_metrics.py
+grep -q 'EXPECTED_GATE_COUNT = 193' scripts/audit_security_compliance_metrics.py
 printf '%s\n' 'Phase 38 external-fencing supervision validation passed.'

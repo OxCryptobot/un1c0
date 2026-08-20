@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-EXPECTED_GATE_COUNT = 185
+EXPECTED_GATE_COUNT = 193
 EXPECTED_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
 INTENTIONAL_FALSE_EVIDENCE = {
     "phase15_election_timers.transport_or_background_threads",
@@ -28,6 +28,8 @@ INTENTIONAL_FALSE_EVIDENCE = {
     "phase43_ownership_bound_cas.cluster_mutation_performed",
     "phase44_ownership_bound_cas_executor.secret_material_recorded",
     "phase44_ownership_bound_cas_executor.cluster_mutation_performed",
+    "phase45_ownership_bound_cas_verifier.secret_material_recorded",
+    "phase45_ownership_bound_cas_verifier.cluster_mutation_performed",
 }
 
 REQUIRED_PHASES = {
@@ -136,6 +138,18 @@ REQUIRED_PHASES = {
         "bounded_latency_samples",
         "shutdown_rejects_new_intents",
         "sanitized_concurrency_metrics",
+        "secret_material_recorded",
+        "cluster_mutation_performed",
+    ],
+    "phase45_ownership_bound_cas_verifier": [
+        "parallel_pre_admission_workers",
+        "bounded_verification_queue",
+        "pre_admission_signature_hash_checks",
+        "ordered_mutation_dispatch",
+        "mutation_revalidation_required",
+        "pre_admission_failure_no_mutation",
+        "verification_latency_metrics_bounded",
+        "verification_stress_sanitized",
         "secret_material_recorded",
         "cluster_mutation_performed",
     ],
@@ -426,6 +440,7 @@ def audit(root: Path, artifact: Path) -> dict:
     check(notes.get("cross_process_ownership_mode") == "atomic ownership lease epochs with hash-bound managed-volume recovery quorum", failures, "unexpected cross-process ownership security note")
     check(notes.get("ownership_bound_cas_mode") == "ownership permit held through replicated CAS quorum and record advancement", failures, "unexpected ownership-bound CAS security note")
     check(notes.get("ownership_bound_cas_executor_mode") == "bounded worker-owned FIFO executor with sanitized contention metrics", failures, "unexpected ownership-bound CAS executor security note")
+    check(notes.get("ownership_bound_cas_verifier_mode") == "parallel read-only pre-admission verification with ordered lock-held mutation revalidation", failures, "unexpected ownership-bound CAS verifier security note")
 
     return {
         "artifact": str(artifact),

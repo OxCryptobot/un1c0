@@ -473,6 +473,22 @@ pub enum CasCommitOutcome {
 }
 
 #[derive(Debug, Clone)]
+pub struct CasPreAdmissionContext {
+    cluster_id: String,
+    resource_id: String,
+    snapshot_id: String,
+    required_quorum: usize,
+    writers: BTreeMap<String, Vec<u8>>,
+    replicas: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CasPreAdmissionEvidence {
+    pub request_hash: String,
+    pub verified_replica_count: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct SingleWriterCasStore {
     cluster_id: String,
     resource_id: String,
@@ -482,6 +498,71 @@ pub struct SingleWriterCasStore {
     writers: BTreeMap<String, Vec<u8>>,
     replicas: BTreeMap<String, Vec<u8>>,
     committed_requests: BTreeMap<String, CasCommitReceipt>,
+}
+
+impl CasPreAdmissionContext {
+    pub fn verify(
+        &self,
+        request: &CasWriteRequest,
+        acknowledgements: &[ReplicaDurabilityAcknowledgement],
+        current_tick: u64,
+    ) -> Result<CasPreAdmissionEvidence, ReplicatedDurabilityError> {
+        request.verify(
+            &self.writers,
+            &self.cluster_id,
+            &self.resource_id,
+            &self.snapshot_id,
+        )?;
+        if request.proposed_hash != request.payload_hash {
+            return Err(ReplicatedDurabilityError::Rejected(
+                "CAS proposed hash does not match payload hash".into(),
+            ));
+        }
+        let mut accepted: BTreeMap<String, String> = BTreeMap::new();
+        for acknowledgement in acknowledgements {
+            acknowledgement.verify(
+                &self.replicas,
+                &self.cluster_id,
+                &self.resource_id,
+                &self.snapshot_id,
+            )?;
+            if acknowledgement.request_hash != request.request_hash
+                || acknowledgement.proposed_generation != request.proposed_generation
+                || acknowledgement.proposed_hash != request.proposed_hash
+            {
+                return Err(ReplicatedDurabilityError::Rejected(
+                    "replica acknowledgement is not bound to the CAS request".into(),
+                ));
+            }
+            if acknowledgement.observed_tick > current_tick
+                || current_tick
+                    > acknowledgement
+                        .observed_tick
+                        .saturating_add(acknowledgement.ttl_ticks)
+            {
+                return Err(ReplicatedDurabilityError::Rejected(
+                    "replica acknowledgement is stale or future-dated".into(),
+                ));
+            }
+            if let Some(previous_hash) = accepted.insert(
+                acknowledgement.replica_id.clone(),
+                acknowledgement.event_hash.clone(),
+            ) {
+                if previous_hash != acknowledgement.event_hash {
+                    return Err(ReplicatedDurabilityError::Conflict(
+                        "replica supplied conflicting acknowledgements".into(),
+                    ));
+                }
+            }
+        }
+        if accepted.len() < self.required_quorum {
+            return Err(ReplicatedDurabilityError::QuorumUnavailable);
+        }
+        Ok(CasPreAdmissionEvidence {
+            request_hash: request.request_hash.clone(),
+            verified_replica_count: accepted.len(),
+        })
+    }
 }
 
 impl SingleWriterCasStore {
@@ -547,6 +628,17 @@ impl SingleWriterCasStore {
 
     pub fn state(&self) -> &CasState {
         &self.state
+    }
+
+    pub fn pre_admission_context(&self) -> CasPreAdmissionContext {
+        CasPreAdmissionContext {
+            cluster_id: self.cluster_id.clone(),
+            resource_id: self.resource_id.clone(),
+            snapshot_id: self.state.snapshot_id.clone(),
+            required_quorum: self.required_quorum,
+            writers: self.writers.clone(),
+            replicas: self.replicas.clone(),
+        }
     }
 
     pub fn committed_request_count(&self) -> usize {
