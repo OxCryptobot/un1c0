@@ -9,7 +9,8 @@ use crate::semantic::{
     validate_ueg_with_profile, SemanticValidationReport, TargetCapabilityProfile,
 };
 use crate::walker::{
-    AstFragment, BinaryOperator, ExpressionKind, SourceSpan, StatementKind, Ueg, UnaryOperator,
+    AstFragment, BinaryOperator, DiagnosticSeverity, ExpressionKind, LambdaNode, NodeKind,
+    SourceSpan, StatementKind, TypedExpression, TypedParameter, TypedStatement, Ueg, UnaryOperator,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,10 +30,86 @@ impl Display for SemanticCacheConfigError {
 
 impl std::error::Error for SemanticCacheConfigError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticFingerprintError {
+    FunctionIndexOutOfBounds { index: usize, function_count: usize },
+}
+
+impl Display for SemanticFingerprintError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FunctionIndexOutOfBounds {
+                index,
+                function_count,
+            } => write!(
+                formatter,
+                "function fingerprint index {index} is outside {function_count} functions"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SemanticFingerprintError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SemanticCacheKey([u8; 32]);
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticFingerprint {
+    profile_key: SemanticCacheKey,
+    function_keys: Vec<SemanticCacheKey>,
+    root_key: SemanticCacheKey,
+}
+
+impl SemanticFingerprint {
+    pub fn from_ueg(ueg: &Ueg, profile: &TargetCapabilityProfile) -> Self {
+        let profile_key = profile_fingerprint(profile);
+        let function_keys = ueg
+            .nodes
+            .iter()
+            .map(|node| {
+                let NodeKind::Lambda(lambda) = node;
+                function_fingerprint(lambda)
+            })
+            .collect::<Vec<_>>();
+        let root_key = compose_root_key(profile_key, &function_keys);
+        Self {
+            profile_key,
+            function_keys,
+            root_key,
+        }
+    }
+
+    pub fn profile_key(&self) -> SemanticCacheKey {
+        self.profile_key
+    }
+
+    pub fn root_key(&self) -> SemanticCacheKey {
+        self.root_key
+    }
+
+    pub fn function_keys(&self) -> &[SemanticCacheKey] {
+        &self.function_keys
+    }
+
+    pub fn replace_function(
+        &mut self,
+        index: usize,
+        lambda: &LambdaNode,
+    ) -> Result<(), SemanticFingerprintError> {
+        let Some(function_key) = self.function_keys.get_mut(index) else {
+            return Err(SemanticFingerprintError::FunctionIndexOutOfBounds {
+                index,
+                function_count: self.function_keys.len(),
+            });
+        };
+        *function_key = function_fingerprint(lambda);
+        self.root_key = compose_root_key(self.profile_key, &self.function_keys);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct SemanticCacheMetrics {
     pub capacity: usize,
     pub entries: usize,
@@ -82,8 +159,16 @@ impl SemanticValidationCache {
         self.lock_state().entries.len()
     }
 
+    pub fn fingerprint_for(
+        &self,
+        ueg: &Ueg,
+        profile: &TargetCapabilityProfile,
+    ) -> SemanticFingerprint {
+        SemanticFingerprint::from_ueg(ueg, profile)
+    }
+
     pub fn key_for(&self, ueg: &Ueg, profile: &TargetCapabilityProfile) -> SemanticCacheKey {
-        fingerprint(ueg, profile)
+        self.fingerprint_for(ueg, profile).root_key()
     }
 
     pub fn validate_for_target(
@@ -100,8 +185,17 @@ impl SemanticValidationCache {
         ueg: &Ueg,
         profile: &TargetCapabilityProfile,
     ) -> SemanticValidationReport {
-        let key = self.key_for(ueg, profile);
-        self.validate_with_key(ueg, profile, key)
+        let fingerprint = self.fingerprint_for(ueg, profile);
+        self.validate_with_fingerprint(ueg, profile, &fingerprint)
+    }
+
+    pub fn validate_with_fingerprint(
+        &self,
+        ueg: &Ueg,
+        profile: &TargetCapabilityProfile,
+        fingerprint: &SemanticFingerprint,
+    ) -> SemanticValidationReport {
+        self.validate_with_key(ueg, profile, fingerprint.root_key())
     }
 
     pub fn validate_with_key(
@@ -177,9 +271,9 @@ impl SemanticValidationCache {
     }
 }
 
-fn fingerprint(ueg: &Ueg, profile: &TargetCapabilityProfile) -> SemanticCacheKey {
+fn profile_fingerprint(profile: &TargetCapabilityProfile) -> SemanticCacheKey {
     let mut hasher = Sha256::new();
-    feed_str(&mut hasher, "un1c0-semantic-cache-v1");
+    feed_str(&mut hasher, "un1c0-semantic-profile-v2");
     feed_str(&mut hasher, profile.target.label());
     feed_bool(&mut hasher, profile.supports_calls);
     feed_bool(&mut hasher, profile.supports_tuples);
@@ -188,13 +282,161 @@ fn fingerprint(ueg: &Ueg, profile: &TargetCapabilityProfile) -> SemanticCacheKey
     feed_bool(&mut hasher, profile.supports_floats);
     feed_unary_operators(&mut hasher, &profile.supported_unary_operators);
     feed_binary_operators(&mut hasher, &profile.supported_binary_operators);
-    feed_u64(&mut hasher, ueg.nodes.len() as u64);
-    for node in &ueg.nodes {
-        let crate::walker::NodeKind::Lambda(lambda) = node;
-        let bytes = serde_json::to_vec(&lambda.ast_fragment).expect("typed AST is serializable");
-        feed_bytes(&mut hasher, &bytes);
+    SemanticCacheKey(hasher.finalize().into())
+}
+
+fn function_fingerprint(lambda: &LambdaNode) -> SemanticCacheKey {
+    let mut hasher = Sha256::new();
+    feed_str(&mut hasher, "un1c0-semantic-function-v2");
+    feed_str(&mut hasher, &lambda.name);
+    feed_parameters(&mut hasher, &lambda.ast_fragment.params);
+    feed_option_str(&mut hasher, lambda.ast_fragment.ret.as_deref());
+    feed_span(&mut hasher, &lambda.ast_fragment.source_span);
+    feed_u64(&mut hasher, lambda.ast_fragment.statements.len() as u64);
+    for statement in &lambda.ast_fragment.statements {
+        feed_statement(&mut hasher, statement);
     }
     SemanticCacheKey(hasher.finalize().into())
+}
+
+fn compose_root_key(
+    profile_key: SemanticCacheKey,
+    function_keys: &[SemanticCacheKey],
+) -> SemanticCacheKey {
+    let mut hasher = Sha256::new();
+    feed_str(&mut hasher, "un1c0-semantic-root-v2");
+    feed_key(&mut hasher, profile_key);
+    feed_u64(&mut hasher, function_keys.len() as u64);
+    for function_key in function_keys {
+        feed_key(&mut hasher, *function_key);
+    }
+    SemanticCacheKey(hasher.finalize().into())
+}
+
+fn feed_parameters(hasher: &mut Sha256, parameters: &[TypedParameter]) {
+    feed_u64(hasher, parameters.len() as u64);
+    for parameter in parameters {
+        feed_str(hasher, &parameter.name);
+        feed_str(hasher, &parameter.annotation);
+    }
+}
+
+fn feed_statement(hasher: &mut Sha256, statement: &TypedStatement) {
+    feed_span(hasher, &statement.span);
+    match &statement.kind {
+        StatementKind::If { condition } => {
+            feed_u64(hasher, 1);
+            feed_expression(hasher, condition);
+        }
+        StatementKind::Return { expression } => {
+            feed_u64(hasher, 2);
+            feed_expression(hasher, expression);
+        }
+        StatementKind::Assign { target, value } => {
+            feed_u64(hasher, 3);
+            feed_expression(hasher, target);
+            feed_expression(hasher, value);
+        }
+        StatementKind::TupleAssign { targets, values } => {
+            feed_u64(hasher, 4);
+            feed_expressions(hasher, targets);
+            feed_expressions(hasher, values);
+        }
+        StatementKind::RangeLoop {
+            target,
+            start,
+            end,
+            inclusive,
+        } => {
+            feed_u64(hasher, 5);
+            feed_expression(hasher, target);
+            feed_expression(hasher, start);
+            feed_expression(hasher, end);
+            feed_bool(hasher, *inclusive);
+        }
+        StatementKind::Print { expression } => {
+            feed_u64(hasher, 6);
+            feed_expression(hasher, expression);
+        }
+        StatementKind::Unsupported { source } => {
+            feed_u64(hasher, 7);
+            feed_str(hasher, source);
+        }
+    }
+}
+
+fn feed_expressions(hasher: &mut Sha256, expressions: &[TypedExpression]) {
+    feed_u64(hasher, expressions.len() as u64);
+    for expression in expressions {
+        feed_expression(hasher, expression);
+    }
+}
+
+fn feed_expression(hasher: &mut Sha256, expression: &TypedExpression) {
+    feed_span(hasher, &expression.span);
+    feed_str(hasher, &expression.source);
+    match &expression.kind {
+        ExpressionKind::Identifier { name } => {
+            feed_u64(hasher, 1);
+            feed_str(hasher, name);
+        }
+        ExpressionKind::Integer { value } => {
+            feed_u64(hasher, 2);
+            hasher.update(value.to_le_bytes());
+        }
+        ExpressionKind::Float { value } => {
+            feed_u64(hasher, 3);
+            feed_str(hasher, value);
+        }
+        ExpressionKind::String { value } => {
+            feed_u64(hasher, 4);
+            feed_str(hasher, value);
+        }
+        ExpressionKind::Boolean { value } => {
+            feed_u64(hasher, 5);
+            feed_bool(hasher, *value);
+        }
+        ExpressionKind::Unary { operator, operand } => {
+            feed_u64(hasher, 6);
+            feed_u64(hasher, unary_code(operator));
+            feed_expression(hasher, operand);
+        }
+        ExpressionKind::Binary {
+            operator,
+            left,
+            right,
+        } => {
+            feed_u64(hasher, 7);
+            feed_u64(hasher, binary_code(operator));
+            feed_expression(hasher, left);
+            feed_expression(hasher, right);
+        }
+        ExpressionKind::Call {
+            function,
+            arguments,
+        } => {
+            feed_u64(hasher, 8);
+            feed_expression(hasher, function);
+            feed_expressions(hasher, arguments);
+        }
+        ExpressionKind::Tuple { items } => {
+            feed_u64(hasher, 9);
+            feed_expressions(hasher, items);
+        }
+        ExpressionKind::Unsupported { source } => {
+            feed_u64(hasher, 10);
+            feed_str(hasher, source);
+        }
+    }
+}
+
+fn feed_span(hasher: &mut Sha256, span: &SourceSpan) {
+    feed_u64(hasher, span.start_byte as u64);
+    feed_u64(hasher, span.end_byte as u64);
+    feed_u64(hasher, span.start_line as u64);
+    feed_u64(hasher, span.start_column as u64);
+    feed_u64(hasher, span.end_line as u64);
+    feed_u64(hasher, span.end_column as u64);
 }
 
 fn feed_unary_operators(hasher: &mut Sha256, operators: &[UnaryOperator]) {
@@ -249,16 +491,24 @@ fn feed_str(hasher: &mut Sha256, value: &str) {
     feed_bytes(hasher, value.as_bytes());
 }
 
+fn feed_option_str(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            feed_bool(hasher, true);
+            feed_str(hasher, value);
+        }
+        None => feed_bool(hasher, false),
+    }
+}
+
+fn feed_key(hasher: &mut Sha256, key: SemanticCacheKey) {
+    hasher.update(key.0);
+}
+
 fn feed_bytes(hasher: &mut Sha256, value: &[u8]) {
     feed_u64(hasher, value.len() as u64);
     hasher.update(value);
 }
 
 #[allow(dead_code)]
-fn _typed_contracts_are_exhaustive(
-    _fragment: &AstFragment,
-    _span: &SourceSpan,
-    _expression: &ExpressionKind,
-    _statement: &StatementKind,
-) {
-}
+fn _typed_contracts_are_exhaustive(_fragment: &AstFragment, _severity: &DiagnosticSeverity) {}
