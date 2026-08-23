@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 60px 80px 0 80px;
+            position: relative;
+        }
+        .header {
+            margin-bottom: 50px;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 20px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .accent-bar {
+            width: 100px;
+            height: 4px;
+            background: linear-gradient(90deg, #58a6ff, #bc8cff);
+            margin: 15px auto 0;
+        }
+        .columns-container {
+            display: flex;
+            gap: 40px;
+            margin-top: 60px;
+        }
+        .column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.02);
+            border-top: 4px solid #30363d;
+        }
+        .column:nth-child(1) { border-top-color: #58a6ff; }
+        .column:nth-child(2) { border-top-color: #bc8cff; }
+        .column:nth-child(3) { border-top-color: #3fb950; }
+
+        .icon-wrapper {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 25px;
+            font-size: 36px;
+            background: #161b22;
+        }
+        .column:nth-child(1) .icon-wrapper { color: #58a6ff; border: 2px solid rgba(88, 166, 255, 0.3); }
+        .column:nth-child(2) .icon-wrapper { color: #bc8cff; border: 2px solid rgba(188, 140, 255, 0.3); }
+        .column:nth-child(3) .icon-wrapper { color: #3fb950; border: 2px solid rgba(63, 185, 80, 0.3); }
+
+        h3 {
+            font-size: 26px;
+            color: #ffffff;
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+        p {
+            font-size: 18px;
+            line-height: 1.6;
+            color: #8b949e;
+        }
+        .conclusion {
+            text-align: center;
+            margin-top: 60px;
+            font-size: 22px;
+            color: #ffffff;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Next Steps: Production Readiness</h1>
+            <div class="accent-bar"></div>
+        </div>
+
+        <div class="columns-container">
+            <div class="column">
+                <div class="icon-wrapper"><i class="fas fa-network-wired"></i></div>
+                <h3>Authenticated Service Channels</h3>
+                <p>Independent peer identity authenticated separately from content attestation, strictly bound to configured policy.</p>
+            </div>
+
+            <div class="column">
+                <div class="icon-wrapper"><i class="fas fa-history"></i></div>
+                <h3>Durable Replay Epochs</h3>
+                <p>Replay epochs and sequence windows survive restart without accepting old frames, retaining frames for explicit recovery.</p>
+            </div>
+
+            <div class="column">
+                <div class="icon-wrapper"><i class="fas fa-tasks"></i></div>
+                <h3>Rollout Gates & Budgets</h3>
+                <p>Enforced resource budgets under stress, staging dry runs, deterministic rollback, and explicit promotion approval.</p>
+            </div>
+        </div>
+
+        <div class="conclusion">
+            Phase 81 closes the deployment boundary for the un1c0 diagnostic streaming architecture.
+        </div>
+    </div>
+</body>
+</html>

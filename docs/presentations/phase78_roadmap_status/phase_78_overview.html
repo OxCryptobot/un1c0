@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 60px 80px 0 80px;
+            position: relative;
+        }
+        .header {
+            margin-bottom: 20px; /* reduced from 50px to save vertical space */
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 20px;
+        }
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .accent-bar {
+            width: 60px;
+            height: 4px;
+            background: #58a6ff;
+            margin-top: 15px;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-gap: 20px; /* reduced from 40px */
+            margin-top: 40px;
+        }
+        .feature-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .icon-wrapper {
+            width: 50px;
+            height: 50px;
+            background: rgba(88, 166, 255, 0.1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px; /* slightly reduced */
+            color: #58a6ff;
+            font-size: 24px;
+        }
+        .feature-item.purple .icon-wrapper {
+            background: rgba(188, 140, 255, 0.1);
+            color: #bc8cff;
+        }
+        h3 {
+            font-size: 28px;
+            color: #ffffff;
+            margin-bottom: 12px;
+        }
+        p {
+            font-size: 20px;
+            line-height: 1.5;
+            color: #8b949e;
+            margin-bottom: 8px; /* reduced */
+        }
+        ul {
+            list-style-type: none;
+            margin-top: 10px;
+        }
+        li {
+            font-size: 18px;
+            color: #c9d1d9;
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+        li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #58a6ff;
+            font-family: monospace;
+        }
+        .feature-item.purple li::before {
+            color: #bc8cff;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Phase 78: Canonical-Byte Reuse & Telemetry</h1>
+            <div class="accent-bar"></div>
+        </div>
+
+        <div class="grid-container">
+            <div class="feature-item">
+                <div class="icon-wrapper"><i class="fas fa-recycle"></i></div>
+                <h3>Immutable Canonical-Byte Reuse</h3>
+                <p>Eliminated redundant serialization across the verification pipeline.</p>
+                <ul>
+                    <li>Zero-digest payloads cached upon verification</li>
+                    <li>Shared <code>Arc&lt;[u8]&gt;</code> allocation with evidence</li>
+                    <li>Byte-identical golden-vector validation</li>
+                </ul>
+            </div>
+
+            <div class="feature-item purple">
+                <div class="icon-wrapper"><i class="fas fa-shield-alt"></i></div>
+                <h3>Versioned Telemetry Schema</h3>
+                <p>Strict boundaries for diagnostic observability data.</p>
+                <ul>
+                    <li><code>deny_unknown_fields</code> at every nesting level</li>
+                    <li>Explicit redacted key/string allowlist enforced</li>
+                    <li>Automated repository-wide redaction scanner</li>
+                </ul>
+            </div>
+
+            <div class="feature-item purple">
+                <div class="icon-wrapper"><i class="fas fa-filter"></i></div>
+                <h3>Non-Authoritative Collection</h3>
+                <p>Observability failures do not compromise integrity.</p>
+                <ul>
+                    <li>Typed queue-full and schema-rejection errors</li>
+                    <li>Verified acceptance remains unchanged on overflow</li>
+                    <!-- removed one less-important sub-point to reduce height -->
+                </ul>
+            </div>
+
+            <div class="feature-item">
+                <div class="icon-wrapper"><i class="fas fa-list-ol"></i></div>
+                <h3>Deterministic Journal Ordering</h3>
+                <p>Strict verification-before-mutation sequencing.</p>
+                <ul>
+                    <li>Sequence: Verify → Preflight → Journal → Mutate</li>
+                    <li>Rollback on unexpected post-journal mutation failure</li>
+                    <!-- removed one less-important sub-point to reduce height -->
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

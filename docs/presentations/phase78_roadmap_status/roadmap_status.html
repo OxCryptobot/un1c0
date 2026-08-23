@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 60px 80px 0 80px;
+            position: relative;
+        }
+        .header {
+            margin-bottom: 30px;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 20px;
+        }
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .accent-bar {
+            width: 60px;
+            height: 4px;
+            background: #58a6ff;
+            margin-top: 15px;
+        }
+        .timeline {
+            position: relative;
+            padding-left: 40px;
+            margin-top: 30px;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 10px;
+            bottom: 10px;
+            width: 2px;
+            background: #30363d;
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 18px; /* shrunk spacing between items to reduce total height */
+        }
+        .timeline-item:last-child {
+            margin-bottom: 0;
+        }
+        .timeline-node {
+            position: absolute;
+            left: -40px;
+            top: 5px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #0d1117;
+            border: 4px solid #30363d;
+            z-index: 2;
+        }
+        .timeline-item.completed .timeline-node {
+            border-color: #3fb950;
+            background: #3fb950;
+        }
+        .timeline-item.local .timeline-node {
+            border-color: #58a6ff;
+            background: #58a6ff;
+        }
+        .timeline-item.pending .timeline-node {
+            border-color: #8b949e;
+            background: transparent;
+        }
+        .timeline-content {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 8px 16px; /* reduced vertical padding to shrink each item height */
+            border-left: 3px solid transparent;
+        }
+        .timeline-item.completed .timeline-content {
+            border-left-color: #3fb950;
+        }
+        .timeline-item.local .timeline-content {
+            border-left-color: #58a6ff;
+        }
+        .timeline-item.pending .timeline-content {
+            border-left-color: #8b949e;
+            opacity: 0.7;
+        }
+        .phase-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .phase-desc {
+            font-size: 18px;
+            color: #8b949e;
+        }
+        .status-badge {
+            font-size: 14px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-family: ui-monospace, monospace;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .status-badge.completed {
+            background: rgba(63, 185, 80, 0.1);
+            color: #3fb950;
+            border: 1px solid rgba(63, 185, 80, 0.4);
+        }
+        .status-badge.local {
+            background: rgba(88, 166, 255, 0.1);
+            color: #58a6ff;
+            border: 1px solid rgba(88, 166, 255, 0.4);
+        }
+        .status-badge.pending {
+            background: rgba(139, 148, 158, 0.1);
+            color: #8b949e;
+            border: 1px solid rgba(139, 148, 158, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Phase 76–81 Roadmap Status</h1>
+            <div class="accent-bar"></div>
+        </div>
+
+        <div class="timeline">
+            <div class="timeline-item completed">
+                <div class="timeline-node"></div>
+                <div class="timeline-content">
+                    <div class="phase-title">
+                        <span>Phase 76 & 77: Cache & Scheduler Hardening</span>
+                        <span class="status-badge completed">Completed</span>
+                    </div>
+                    <div class="phase-desc">Bounded semantic cache, asynchronous workers, cancellation, and per-node fairness.</div>
+                </div>
+            </div>
+
+            <div class="timeline-item completed">
+                <div class="timeline-node"></div>
+                <div class="timeline-content">
+                    <div class="phase-title">
+                        <span>Phase 78: Canonical-Byte Reuse & Telemetry</span>
+                        <span class="status-badge completed">Completed</span>
+                    </div>
+                    <div class="phase-desc">Immutable byte caching, versioned redacted telemetry, and deterministic journal ordering.</div>
+                </div>
+            </div>
+
+            <div class="timeline-item local">
+                <div class="timeline-node"></div>
+                <div class="timeline-content">
+                    <div class="phase-title">
+                        <span>Phase 79: Service Identity & Durable Outbox</span>
+                        <span class="status-badge local">Local Validation</span>
+                    </div>
+                    <div class="phase-desc">Independent service registry, signer rotation/revocation, exact binding, and crash-safe outbox.</div>
+                </div>
+            </div>
+
+            <div class="timeline-item pending">
+                <div class="timeline-node"></div>
+                <div class="timeline-content">
+                    <div class="phase-title">
+                        <span>Phase 80: Policy Integration</span>
+                        <span class="status-badge pending">Pending</span>
+                    </div>
+                    <div class="phase-desc">Consensus, failover, and controlled-evolution policy gates. Diagnostic facts cannot grant authority.</div>
+                </div>
+            </div>
+
+            <div class="timeline-item pending">
+                <div class="timeline-node"></div>
+                <div class="timeline-content">
+                    <div class="phase-title">
+                        <span>Phase 81: Production Transport & Rollout</span>
+                        <span class="status-badge pending">Pending</span>
+                    </div>
+                    <div class="phase-desc">Authenticated service channels, durable replay epochs, resource budgets, and staging dry runs.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

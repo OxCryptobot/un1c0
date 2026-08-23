@@ -1,8 +1,9 @@
 use std::fmt::{Display, Formatter};
 
 use crate::lock_free_buffer_pool::{LockFreeBufferPool, PooledBuffer};
-use crate::semantic::{validate_ueg_for_target, SemanticValidationReport};
+use crate::semantic::{validate_ueg_for_target, SemanticValidationReport, TargetCapabilityProfile};
 use crate::semantic_cache::SemanticValidationCache;
+use crate::semantic_snapshot::SemanticValidationSnapshot;
 use crate::targets::{lower_to_go, lower_to_zig};
 use crate::ueg_python::lower_to_python;
 use crate::walker::{
@@ -81,11 +82,26 @@ pub struct GenerationStats {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenerationError {
-    InvalidUeg { diagnostic_count: usize },
-    CursorRewind { cursor: usize, node_count: usize },
-    EmitterOutput { target: TargetBinding },
-    Sink { message: String },
-    SemanticValidation { report: SemanticValidationReport },
+    InvalidUeg {
+        diagnostic_count: usize,
+    },
+    CursorRewind {
+        cursor: usize,
+        node_count: usize,
+    },
+    EmitterOutput {
+        target: TargetBinding,
+    },
+    Sink {
+        message: String,
+    },
+    SemanticValidation {
+        report: SemanticValidationReport,
+    },
+    ValidationSnapshot {
+        target: TargetBinding,
+        reason: String,
+    },
 }
 
 impl Display for GenerationError {
@@ -114,6 +130,11 @@ impl Display for GenerationError {
                 "{} semantic validation errors for {} target",
                 report.error_count(),
                 report.target.label()
+            ),
+            Self::ValidationSnapshot { target, reason } => write!(
+                formatter,
+                "{} target rejected semantic validation snapshot: {reason}",
+                target.label()
             ),
         }
     }
@@ -194,6 +215,39 @@ impl IncrementalCodeGenerator {
         E: Display,
     {
         validate_generation_input(ueg, self.target, self.semantic_cache.as_ref())?;
+        let mut stats = GenerationStats {
+            target: self.target,
+            chunks_emitted: 0,
+            bytes_emitted: 0,
+        };
+        while let Some(chunk) = self.next_chunk_unchecked(ueg)? {
+            let bytes = chunk.code.len();
+            sink(chunk).map_err(|error| GenerationError::Sink {
+                message: error.to_string(),
+            })?;
+            stats.chunks_emitted += 1;
+            stats.bytes_emitted += bytes;
+        }
+        Ok(stats)
+    }
+
+    pub fn emit_remaining_with_snapshot<F, E>(
+        &mut self,
+        ueg: &Ueg,
+        snapshot: &SemanticValidationSnapshot,
+        mut sink: F,
+    ) -> Result<GenerationStats, GenerationError>
+    where
+        F: FnMut(GeneratedChunk) -> Result<(), E>,
+        E: Display,
+    {
+        let profile = TargetCapabilityProfile::for_target(self.target);
+        snapshot.verify_for(ueg, &profile).map_err(|error| {
+            GenerationError::ValidationSnapshot {
+                target: self.target,
+                reason: error.to_string(),
+            }
+        })?;
         let mut stats = GenerationStats {
             target: self.target,
             chunks_emitted: 0,

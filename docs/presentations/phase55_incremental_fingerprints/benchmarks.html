@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    .slide-container { width: 1280px; min-height: 720px; background: #0b1220; color: #f5f7fb; font-family: Arial, Helvetica, sans-serif; }
+    .content { min-height: 720px; padding: 64px 64px 0 64px; display: flex; flex-direction: column; }
+    .header { border-bottom: 1px solid #2a3a53; padding-bottom: 18px; margin-bottom: 32px; }
+    .eyebrow { color: #55d6d2; letter-spacing: 3px; font-size: 14px; font-weight: 700; text-transform: uppercase; }
+    h1 { font-size: 38px; margin: 12px 0 0 0; letter-spacing: -0.8px; }
+    /* Reduced padding and image max-height to remove overflow */
+    .chart-container { flex: 1; display: flex; justify-content: center; align-items: center; background: #fff; padding: 12px; border: 1px solid #38506e; }
+    .chart-container img { max-width: 100%; max-height: 340px; object-fit: contain; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 20px; border-top: 4px solid #55d6d2; padding-top: 24px; }
+    .metric { background: #111d30; padding: 16px; border: 1px solid #38506e; }
+    .metric-value { color: #f0b54d; font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+    .metric-label { color: #9eacc1; font-size: 14px; font-family: "Courier New", monospace; }
+  </style>
+</head>
+<body>
+  <div class="slide-container">
+    <div class="content">
+      <div class="header">
+        <div class="eyebrow">PERFORMANCE EVIDENCE</div>
+        <h1>Benchmark Results</h1>
+      </div>
+      <div class="chart-container">
+        <img src="/home/ubuntu/un1c0/benchmarks/phase55_incremental_fingerprint.png" alt="Benchmark Chart" />
+      </div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-value">13.0–13.2×</div>
+          <div class="metric-label">p50 speedup at 32 functions</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">10.3 µs</div>
+          <div class="metric-label">Incremental p50 at 32 functions</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">136.5 µs</div>
+          <div class="metric-label">Full fingerprint p50 at 32 functions</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

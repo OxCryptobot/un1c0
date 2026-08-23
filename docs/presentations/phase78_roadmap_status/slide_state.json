@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "title": "Phase 78 Achievements & Roadmap Status",
+    "created": 1787444810.721,
+    "last_updated": 1787445062.383,
+    "total_slides": 5
+  },
+  "slides": [
+    {
+      "id": "title_page",
+      "state": "edited",
+      "pageNum": 1
+    },
+    {
+      "id": "phase_78_overview",
+      "state": "edited",
+      "pageNum": 2
+    },
+    {
+      "id": "evidence_and_bounds",
+      "state": "edited",
+      "pageNum": 3
+    },
+    {
+      "id": "roadmap_status",
+      "state": "edited",
+      "pageNum": 4
+    },
+    {
+      "id": "next_steps",
+      "state": "edited",
+      "pageNum": 5
+    }
+  ],
+  "outline": [
+    {
+      "id": "title_page",
+      "title": "Phase 78 Achievements & Roadmap Status",
+      "summary": "Title slide for the un1c0 diagnostic streaming update.",
+      "image_plan": "Use a suitable image if needed"
+    },
+    {
+      "id": "phase_78_overview",
+      "title": "Phase 78: Canonical-Byte Reuse & Telemetry",
+      "summary": "Overview of Phase 78 achievements: immutable canonical-byte reuse, versioned telemetry schema, non-authoritative collection, and deterministic journal ordering.",
+      "image_plan": "Use a suitable image if needed"
+    },
+    {
+      "id": "evidence_and_bounds",
+      "title": "Validated Evidence and Boundaries",
+      "summary": "Summary of the 13 focused tests, 436 all-target tests, sanitized artifact evidence, and fail-closed telemetry semantics.",
+      "image_plan": "Use a suitable image if needed"
+    },
+    {
+      "id": "roadmap_status",
+      "title": "Phase 76–81 Roadmap Status",
+      "summary": "Current status of the integration roadmap, showing F76–F79 local implementation and pending Phase 80/81 production gates.",
+      "image_plan": "Use a suitable image if needed"
+    },
+    {
+      "id": "next_steps",
+      "title": "Next Steps: Production Readiness",
+      "summary": "Closing slide detailing the remaining Phase 81 requirements: authenticated service channels, durable replay epochs, and rollout gates.",
+      "image_plan": "Use a suitable image if needed"
+    }
+  ]
+}

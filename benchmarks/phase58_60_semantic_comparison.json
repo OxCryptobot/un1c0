@@ -1,0 +1,38 @@
+[
+  {
+    "phase": 58,
+    "incremental_operation": "warm dependency-aware refresh",
+    "full_capture_p50_ns": 646982,
+    "full_capture_p95_ns": 685920,
+    "incremental_p50_ns": 1387714,
+    "incremental_p95_ns": 1701514,
+    "functions": 32,
+    "target": "rust",
+    "source": "benchmarks/phase58_semantic_session.json",
+    "errors": 0
+  },
+  {
+    "phase": 59,
+    "incremental_operation": "fingerprint-derived auto-refresh",
+    "full_capture_p50_ns": 644265,
+    "full_capture_p95_ns": 708287,
+    "incremental_p50_ns": 2667889,
+    "incremental_p95_ns": 2863497,
+    "functions": 32,
+    "target": "rust",
+    "source": "benchmarks/phase59_semantic_change_derivation.json",
+    "errors": 0
+  },
+  {
+    "phase": 60,
+    "incremental_operation": "typed edit-manifest refresh",
+    "full_capture_p50_ns": 643630,
+    "full_capture_p95_ns": 720110,
+    "incremental_p50_ns": 4635962,
+    "incremental_p95_ns": 5819048,
+    "functions": 32,
+    "target": "rust",
+    "source": "benchmarks/phase60_semantic_edit_manifest.json",
+    "errors": 0
+  }
+]

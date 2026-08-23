@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    .slide-container { width: 1280px; min-height: 720px; background: #0b1220; color: #f5f7fb; font-family: Arial, Helvetica, sans-serif; }
+    .content { min-height: 720px; padding: 64px 64px 0 64px; }
+    .header { border-bottom: 1px solid #2a3a53; padding-bottom: 18px; }
+    .eyebrow { color: #55d6d2; letter-spacing: 3px; font-size: 14px; font-weight: 700; text-transform: uppercase; }
+    h1 { font-size: 38px; margin: 12px 0 0 0; letter-spacing: -0.8px; }
+    .main { display: grid; grid-template-columns: 1.18fr 0.82fr; gap: 48px; padding-top: 48px; }
+    .diagram { display: grid; grid-template-columns: 1fr 72px 1fr; gap: 16px; align-items: center; min-height: 360px; }
+    .inputs { display: grid; gap: 12px; }
+    .digest { border: 1px solid #38506e; background: #111d30; padding: 14px 16px 0 16px; }
+    .digest h2 { font-size: 19px; margin: 0 0 9px 0; }
+    .digest p { margin: 0; color: #9eacc1; font: 13px "Courier New", monospace; line-height: 1.4; }
+    .digest.profile { border-top: 4px solid #55d6d2; min-height: 80px; }
+    .digest.function { border-top: 4px solid #f0b54d; min-height: 100px; }
+    .digest.root { border-top: 4px solid #e06a7a; min-height: 130px; padding-top: 28px; }
+    .digest.root h2 { font-size: 25px; }
+    .digest.root p { color: #c8d2e3; font-size: 14px; }
+    .arrows { display: grid; align-content: center; gap: 28px; color: #55d6d2; font: 22px "Courier New", monospace; text-align: center; }
+    .arrowline { border-top: 1px solid #55d6d2; width: 72px; padding-top: 6px; }
+    .contract { border-top: 4px solid #55d6d2; padding-top: 20px; }
+    .contract h2 { margin: 0 0 20px 0; font-size: 22px; }
+    .row { border-bottom: 1px solid #2a3a53; padding: 12px 0; display: grid; grid-template-columns: 112px 1fr; gap: 18px; }
+    .row strong { color: #f0b54d; font-size: 14px; font-family: "Courier New", monospace; }
+    .row span { color: #c8d2e3; font-size: 16px; line-height: 1.25; }
+    .footer { color: #687a93; font: 12px "Courier New", monospace; margin-top: 18px; }
+  </style>
+</head>
+<body>
+  <div class="slide-container">
+    <div class="content">
+      <div class="header"><div class="eyebrow">THE DATA MODEL</div><h1>Three digests. One exact identity.</h1></div>
+      <div class="main">
+        <section class="diagram">
+          <div class="inputs">
+            <div class="digest profile"><h2>Profile digest</h2><p>target · capability flags<br/>ordered operator sets</p></div>
+            <div class="digest function"><h2>Function digests</h2><p>name · annotations · spans<br/>typed statements · expressions</p></div>
+          </div>
+          <div class="arrows"><div class="arrowline">→</div><div class="arrowline">→</div></div>
+          <div class="digest root"><h2>Root cache key</h2><p>H(profile, ordered<br/>function digests)</p></div>
+        </section>
+        <section class="contract">
+          <h2>Invalidation contract</h2>
+          <div class="row"><strong>replace(i)</strong><span>Updates exactly one function digest.</span></div>
+          <div class="row"><strong>reorder</strong><span>Changes the root because order is semantic input.</span></div>
+          <div class="row"><strong>profile</strong><span>Target or capability changes produce a new root.</span></div>
+          <div class="row"><strong>bounds</strong><span>Out-of-range replacement fails closed.</span></div>
+          <div class="footer">No persistent state · no remote trust · no authority grant</div>
+        </section>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

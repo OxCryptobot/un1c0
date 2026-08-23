@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "phase": 80,
+  "artifact": "diagnostic_outbox_sync_comparison",
+  "samples": 11,
+  "batch_sizes": [
+    4,
+    8,
+    16
+  ],
+  "modes": [
+    {
+      "mode": "durable_sync",
+      "batch": 4,
+      "samples": 11,
+      "p50_us": 83563,
+      "p95_us": 94291,
+      "p99_us": 94291,
+      "max_us": 94291,
+      "median_throughput_ops_per_sec": 47,
+      "submitted_per_trial": 4,
+      "accepted_per_trial": 4,
+      "errors": 0
+    },
+    {
+      "mode": "no_sync_benchmark_only",
+      "batch": 4,
+      "samples": 11,
+      "p50_us": 80470,
+      "p95_us": 84061,
+      "p99_us": 84061,
+      "max_us": 84061,
+      "median_throughput_ops_per_sec": 49,
+      "submitted_per_trial": 4,
+      "accepted_per_trial": 4,
+      "errors": 0
+    },
+    {
+      "mode": "durable_sync",
+      "batch": 8,
+      "samples": 11,
+      "p50_us": 291780,
+      "p95_us": 305267,
+      "p99_us": 305267,
+      "max_us": 305267,
+      "median_throughput_ops_per_sec": 27,
+      "submitted_per_trial": 8,
+      "accepted_per_trial": 8,
+      "errors": 0
+    },
+    {
+      "mode": "no_sync_benchmark_only",
+      "batch": 8,
+      "samples": 11,
+      "p50_us": 289400,
+      "p95_us": 294879,
+      "p99_us": 294879,
+      "max_us": 294879,
+      "median_throughput_ops_per_sec": 27,
+      "submitted_per_trial": 8,
+      "accepted_per_trial": 8,
+      "errors": 0
+    },
+    {
+      "mode": "durable_sync",
+      "batch": 16,
+      "samples": 11,
+      "p50_us": 1105319,
+      "p95_us": 1115838,
+      "p99_us": 1115838,
+      "max_us": 1115838,
+      "median_throughput_ops_per_sec": 14,
+      "submitted_per_trial": 16,
+      "accepted_per_trial": 16,
+      "errors": 0
+    },
+    {
+      "mode": "no_sync_benchmark_only",
+      "batch": 16,
+      "samples": 11,
+      "p50_us": 1090269,
+      "p95_us": 1134956,
+      "p99_us": 1134956,
+      "max_us": 1134956,
+      "median_throughput_ops_per_sec": 14,
+      "submitted_per_trial": 16,
+      "accepted_per_trial": 16,
+      "errors": 0
+    }
+  ],
+  "errors": 0,
+  "secret_material_recorded": false
+}
