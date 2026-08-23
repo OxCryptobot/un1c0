@@ -54,6 +54,16 @@ impl std::error::Error for SemanticFingerprintError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SemanticCacheKey([u8; 32]);
 
+impl SemanticCacheKey {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticFingerprint {
     profile_key: SemanticCacheKey,
@@ -204,11 +214,33 @@ impl SemanticValidationCache {
         profile: &TargetCapabilityProfile,
         key: SemanticCacheKey,
     ) -> SemanticValidationReport {
-        if let Some(report) = self.lookup(key) {
+        // Hold the state lock across the miss computation so concurrent identical
+        // validations cannot all observe a miss and inflate the evidence metrics.
+        // The semantic validator is local and does not call back into this cache.
+        let mut state = self.lock_state();
+        if let Some(position) = state
+            .entries
+            .iter()
+            .position(|(entry_key, _)| *entry_key == key)
+        {
+            let entry = state
+                .entries
+                .remove(position)
+                .expect("cache position exists");
+            let report = entry.1.clone();
+            state.entries.push_back(entry);
+            state.hits += 1;
             return report;
         }
+
+        state.misses += 1;
         let report = validate_ueg_with_profile(ueg, profile.clone());
-        self.insert(key, report.clone());
+        if state.entries.len() == self.capacity {
+            state.entries.pop_front();
+            state.evictions += 1;
+        }
+        state.entries.push_back((key, report.clone()));
+        state.insertions += 1;
         report
     }
 

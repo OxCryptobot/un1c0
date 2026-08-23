@@ -1,0 +1,62 @@
+[
+  {
+    "units": 1,
+    "functions_per_unit": 8,
+    "total_functions": 8,
+    "samples": 64,
+    "target": "rust",
+    "batch_id": 1,
+    "capture_p50_ns": 765,
+    "capture_p95_ns": 1093,
+    "verification_p50_ns": 163948,
+    "verification_p95_ns": 191900,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 2,
+    "functions_per_unit": 8,
+    "total_functions": 16,
+    "samples": 64,
+    "target": "rust",
+    "batch_id": 1,
+    "capture_p50_ns": 1195,
+    "capture_p95_ns": 1356,
+    "verification_p50_ns": 345780,
+    "verification_p95_ns": 434976,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 4,
+    "functions_per_unit": 8,
+    "total_functions": 32,
+    "samples": 64,
+    "target": "rust",
+    "batch_id": 1,
+    "capture_p50_ns": 2266,
+    "capture_p95_ns": 2344,
+    "verification_p50_ns": 691260,
+    "verification_p95_ns": 804592,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 8,
+    "functions_per_unit": 8,
+    "total_functions": 64,
+    "samples": 64,
+    "target": "rust",
+    "batch_id": 1,
+    "capture_p50_ns": 4943,
+    "capture_p95_ns": 7390,
+    "verification_p50_ns": 1360113,
+    "verification_p95_ns": 1537502,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  }
+]

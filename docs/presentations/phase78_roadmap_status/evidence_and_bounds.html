@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .slide-container {
+            width: 1280px;
+            min-height: 720px;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 60px 80px 0 80px;
+            position: relative;
+        }
+        .header {
+            margin-bottom: 30px; /* reduced from 40 to save vertical space */
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 20px;
+        }
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .accent-bar {
+            width: 60px;
+            height: 4px;
+            background: #bc8cff;
+            margin-top: 15px;
+        }
+        .content-split {
+            display: flex;
+            gap: 60px;
+            margin-top: 20px;
+            align-items: flex-start;
+        }
+        .metrics-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px; /* reduced gap to pull boxes up */
+        }
+        .metric-box {
+            background: rgba(88, 166, 255, 0.05);
+            border-left: 4px solid #58a6ff;
+            padding: 16px; /* reduced padding to save vertical space */
+        }
+        .metric-number {
+            font-size: 64px;
+            font-weight: 800;
+            color: #58a6ff;
+            line-height: 1;
+            margin-bottom: 10px;
+            font-family: ui-monospace, monospace;
+        }
+        .metric-label {
+            font-size: 22px;
+            color: #ffffff;
+            font-weight: 600;
+        }
+        .metric-sub {
+            font-size: 16px;
+            color: #8b949e;
+            margin-top: 5px;
+        }
+        .bounds-col {
+            flex: 1;
+        }
+        h3 {
+            font-size: 32px;
+            color: #ffffff;
+            margin-bottom: 16px; /* reduced */
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        h3 i {
+            color: #bc8cff;
+        }
+        .bound-item {
+            margin-bottom: 12px; /* reduced */
+        }
+        .bound-title {
+            font-size: 22px;
+            font-weight: 600;
+            color: #c9d1d9;
+            margin-bottom: 8px;
+        }
+        .bound-desc {
+            font-size: 18px;
+            color: #8b949e;
+            line-height: 1.5;
+            padding-left: 16px;
+            border-left: 2px solid #30363d;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <div class="header">
+            <h1>Validated Evidence and Boundaries</h1>
+            <div class="accent-bar"></div>
+        </div>
+
+        <div class="content-split">
+            <div class="metrics-col">
+                <div class="metric-box">
+                    <div class="metric-number">13</div>
+                    <div class="metric-label">Focused Regression Tests</div>
+                    <div class="metric-sub">Zero failures across Phase 75/79 and F78.3/F78.4 matrices</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-number">436</div>
+                    <div class="metric-label">Complete All-Target Suite</div>
+                    <div class="metric-sub">Zero failures in the final Rust test run</div>
+                </div>
+                <div class="metric-box" style="border-color: #3fb950;">
+                    <div class="metric-number" style="color: #3fb950; font-size: 48px;">PASS</div>
+                    <div class="metric-label">Automated Redaction Scan</div>
+                    <div class="metric-sub">Sanitized artifacts contain zero leaked secrets</div>
+                </div>
+            </div>
+
+            <div class="bounds-col">
+                <h3><i class="fas fa-lock"></i> Fail-Closed Semantics</h3>
+
+                <div class="bound-item">
+                    <div class="bound-title">Observability Non-Authority</div>
+                    <div class="bound-desc">Collector overflow and schema errors are typed but ignored at the authority boundary. Verified acceptance and aggregate mutation remain correct.</div>
+                </div>
+
+                <div class="bound-item">
+                    <div class="bound-title">Immutable Cache Integrity</div>
+                    <div class="bound-desc">Missing or inconsistent canonical bytes fall back to full verification. Tampered bytes are rejected.</div>
+                </div>
+
+                <div class="bound-item">
+                    <div class="bound-title">Journal Isolation</div>
+                    <div class="bound-desc">Process-local diagnostic journal append precedes mutation. Full-journal and rejected paths leave aggregate state completely unchanged.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

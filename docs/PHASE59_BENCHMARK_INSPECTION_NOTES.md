@@ -1,0 +1,6 @@
+# Phase 59 benchmark inspection notes
+
+The Phase 59 chart is a 1920×800 PNG with two readable panels: p50 and p95 latency. Both panels use a log2 x-axis labeled `functions in UEG`, microseconds on the y-axis, and a clear legend for full snapshot capture, exact change derivation, and dependency-aware auto-refresh. The chart is legible at the initial view and shows the expected upward scaling from 1 to 32 functions.
+
+The key visual result is that auto-refresh is consistently above the other two series for the call-chain fixture, while exact derivation remains close to full capture. This is expected because the changed leaf reaches every caller; the chart should not be interpreted as a production speedup claim. The artifact includes no authority or secret markers in the plotted data.
+The Phase 60 chart is also a readable 1920×800 two-panel plot with p50/p95 microsecond axes, log2 function counts, and distinct series for full capture, edit-manifest resolution, and manifest-bound refresh. Manifest resolution tracks full capture closely; manifest-bound refresh dominates the call-chain fixture and scales steeply because it includes session construction, range mapping, dependency closure, and validation. This is an expected worst-case fixture result, not a production throughput claim.

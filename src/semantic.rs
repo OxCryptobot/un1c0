@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fmt::{Display, Formatter};
 
 use crate::codegen::TargetBinding;
 use crate::walker::{
@@ -102,6 +103,27 @@ pub fn validate_ueg_for_target(ueg: &Ueg, target: TargetBinding) -> SemanticVali
     validate_ueg_with_profile(ueg, TargetCapabilityProfile::for_target(target))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticFunctionValidationError {
+    FunctionIndexOutOfBounds { index: usize, function_count: usize },
+}
+
+impl Display for SemanticFunctionValidationError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FunctionIndexOutOfBounds {
+                index,
+                function_count,
+            } => write!(
+                formatter,
+                "semantic function index {index} is outside {function_count} functions"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SemanticFunctionValidationError {}
+
 pub fn validate_ueg_with_profile(
     ueg: &Ueg,
     profile: TargetCapabilityProfile,
@@ -171,6 +193,71 @@ pub fn validate_ueg_with_profile(
         expression_count,
         diagnostics,
     }
+}
+
+pub fn validate_function_with_profile(
+    ueg: &Ueg,
+    function_index: usize,
+    profile: TargetCapabilityProfile,
+) -> Result<SemanticValidationReport, SemanticFunctionValidationError> {
+    let Some(node) = ueg.nodes.get(function_index) else {
+        return Err(SemanticFunctionValidationError::FunctionIndexOutOfBounds {
+            index: function_index,
+            function_count: ueg.nodes.len(),
+        });
+    };
+    let NodeKind::Lambda(lambda) = node;
+    let functions = ueg
+        .nodes
+        .iter()
+        .map(|node| {
+            let NodeKind::Lambda(lambda) = node;
+            lambda.name.clone()
+        })
+        .collect::<BTreeSet<_>>();
+    let mut symbols = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for (name, _) in &lambda.params {
+        if !symbols.insert(name.clone()) {
+            diagnostics.push(diagnostic(
+                "UEG-DUPLICATE-PARAMETER",
+                format!("parameter `{name}` is declared more than once"),
+                profile.target,
+                lambda.source_span.clone(),
+            ));
+        }
+    }
+    let mut expression_count = 0;
+    for statement in &lambda.statements {
+        validate_statement(
+            statement,
+            &mut symbols,
+            &functions,
+            &profile,
+            &mut expression_count,
+            &mut diagnostics,
+        );
+    }
+    diagnostics.sort_by(|left, right| {
+        (
+            left.span.start_byte,
+            left.span.end_byte,
+            left.code.as_str(),
+            left.message.as_str(),
+        )
+            .cmp(&(
+                right.span.start_byte,
+                right.span.end_byte,
+                right.code.as_str(),
+                right.message.as_str(),
+            ))
+    });
+    Ok(SemanticValidationReport {
+        target: profile.target,
+        function_count: 1,
+        expression_count,
+        diagnostics,
+    })
 }
 
 fn validate_statement(

@@ -1,0 +1,43 @@
+{
+  "phase": 72,
+  "samples": 64,
+  "target": "rust",
+  "units": 1,
+  "total_functions": 2,
+  "frames_per_source": 4,
+  "max_sources": 8,
+  "max_aggregate_frames": 256,
+  "rows": [
+    {
+      "source_count": 1,
+      "total_frames": 4,
+      "p50_ns": 10967929,
+      "p95_ns": 11671581,
+      "p99_ns": 11857978
+    },
+    {
+      "source_count": 2,
+      "total_frames": 8,
+      "p50_ns": 21951233,
+      "p95_ns": 22582840,
+      "p99_ns": 23103909
+    },
+    {
+      "source_count": 4,
+      "total_frames": 16,
+      "p50_ns": 43427999,
+      "p95_ns": 43827606,
+      "p99_ns": 44061038
+    },
+    {
+      "source_count": 8,
+      "total_frames": 32,
+      "p50_ns": 86674631,
+      "p95_ns": 88592306,
+      "p99_ns": 89912766
+    }
+  ],
+  "errors": 0,
+  "cluster_mutation_performed": false,
+  "secret_material_recorded": false
+}

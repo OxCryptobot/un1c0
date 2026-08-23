@@ -1,0 +1,62 @@
+[
+  {
+    "units": 1,
+    "functions_per_unit": 8,
+    "total_functions": 8,
+    "samples": 64,
+    "target": "rust",
+    "envelope_id": 1,
+    "raw_batch_p50_ns": 2924901,
+    "raw_batch_p95_ns": 3852765,
+    "envelope_refresh_p50_ns": 2852749,
+    "envelope_refresh_p95_ns": 3229459,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 2,
+    "functions_per_unit": 8,
+    "total_functions": 16,
+    "samples": 64,
+    "target": "rust",
+    "envelope_id": 1,
+    "raw_batch_p50_ns": 5718671,
+    "raw_batch_p95_ns": 8088412,
+    "envelope_refresh_p50_ns": 5565591,
+    "envelope_refresh_p95_ns": 6841243,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 4,
+    "functions_per_unit": 8,
+    "total_functions": 32,
+    "samples": 64,
+    "target": "rust",
+    "envelope_id": 1,
+    "raw_batch_p50_ns": 10825558,
+    "raw_batch_p95_ns": 12034248,
+    "envelope_refresh_p50_ns": 10586719,
+    "envelope_refresh_p95_ns": 11146227,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  },
+  {
+    "units": 8,
+    "functions_per_unit": 8,
+    "total_functions": 64,
+    "samples": 64,
+    "target": "rust",
+    "envelope_id": 1,
+    "raw_batch_p50_ns": 20791538,
+    "raw_batch_p95_ns": 22917260,
+    "envelope_refresh_p50_ns": 20202249,
+    "envelope_refresh_p95_ns": 20692169,
+    "errors": 0,
+    "cluster_mutation_performed": false,
+    "secret_material_recorded": false
+  }
+]

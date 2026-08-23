@@ -1,0 +1,28 @@
+{
+  "phase": 71,
+  "units": 4,
+  "functions_per_unit": 8,
+  "total_functions": 32,
+  "frames": 32,
+  "samples": 64,
+  "target": "rust",
+  "baseline": {
+    "p50_ns": 27341435,
+    "p95_ns": 28959089,
+    "p99_ns": 29002771
+  },
+  "optimized_template": {
+    "p50_ns": 25704371,
+    "p95_ns": 26812241,
+    "p99_ns": 27144379
+  },
+  "current_report_list_builder": {
+    "p50_ns": 26400605,
+    "p95_ns": 27986027,
+    "p99_ns": 28213991
+  },
+  "optimized_p50_reduction_percent": 5.987483831774009,
+  "errors": 0,
+  "cluster_mutation_performed": false,
+  "secret_material_recorded": false
+}
